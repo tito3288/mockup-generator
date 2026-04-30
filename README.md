@@ -1,36 +1,35 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Mockup Generator
 
-## Getting Started
+A single-page Next.js app that generates three distinct homepage mockups for a client. You provide three inspiration URLs, a logo, an optional brand color, and a client name; the app calls Claude (Sonnet 4.5) with the `web_fetch` server tool so Claude actually reads the inspiration sites before designing. The result is three standalone HTML files (Tailwind via CDN) rendered side-by-side in iframes with per-mockup download buttons.
 
-First, run the development server:
+## Local setup
 
 ```bash
+npm install
+cp .env.example .env.local
+# edit .env.local and set ANTHROPIC_API_KEY=sk-ant-...
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+# open http://localhost:3000
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Fill in the form and click **Generate Mockups**. Generation takes 30–60 seconds because Claude fetches each inspiration URL before composing the designs.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Deploy to Railway
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+1. Push this repo to GitHub.
+2. Go to [railway.app](https://railway.app), **New Project → Deploy from GitHub**, and pick the repo.
+3. Railway auto-detects Next.js — no custom build/start commands needed.
+4. In the project's **Variables** tab, add:
+   - `ANTHROPIC_API_KEY` = your Anthropic API key
+5. Click **Deploy**. Railway runs `npm run build` then `npm run start`; `PORT` is injected automatically and Next.js binds to it.
 
-## Learn More
+## How it works
 
-To learn more about Next.js, take a look at the following resources:
+- `src/app/page.tsx` — client component with the form and results grid. The logo is read in-browser via `FileReader.readAsDataURL` and sent to the API as a data URL.
+- `src/app/api/generate/route.ts` — server route that calls `client.beta.messages.create` with the `web_fetch_20250910` tool (beta header `web-fetch-2025-09-10`). The tool runs server-side at Anthropic, so there's no client-side tool loop. The route parses Claude's JSON response and returns the three mockups.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Notes
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- The route sets `maxDuration = 300` to accommodate generations that can take up to a minute.
+- Mockups render in iframes with `sandbox="allow-scripts"` so the Tailwind CDN can apply styles, but the iframe origin stays null and can't reach the host page.
+- Each generation costs a few cents (Sonnet 4.5 input + output, plus `web_fetch` calls).
