@@ -47,22 +47,35 @@ Treat anything from the current site as canonical. Use the inspiration URLs only
   return `You are a senior web designer. Analyze these inspiration URLs and create 3 visually distinct homepage mockups for ${clientName}.
 
 ${currentSiteBlock}${urlLabel}: ${urls.join(", ")}
-Brand color: ${colorLine}
+Brand colors: ${colorLine}
 
 LOGO IMAGE — IMPORTANT:
 Wherever you want the client's logo to appear (typically in the header), use the literal placeholder string \`${LOGO_PLACEHOLDER}\` as the src value. Example:
-<img src="${LOGO_PLACEHOLDER}" alt="${clientName} logo" class="h-8" />
+<img src="${LOGO_PLACEHOLDER}" alt="${clientName} logo" class="h-14 w-auto md:h-16" />
+Make the header logo visually prominent — roughly 56–72px tall on desktop (Tailwind h-14 to h-18, or larger if the design calls for it). Avoid sizes smaller than h-12 in the header; a tiny logo reads as unfinished. Always pair height with \`w-auto\` so the aspect ratio is preserved. Footer or inline mentions can be smaller.
 Do NOT generate a base64 or data URL yourself. The server will substitute the real logo into every occurrence of \`${LOGO_PLACEHOLDER}\` after you finish.
 
 For each of the 3 mockups:
 - Make it a complete standalone HTML file
+- Include the mobile viewport tag in <head>: <meta name="viewport" content="width=device-width, initial-scale=1">
 - Use Tailwind CSS via CDN
 - Include: header with logo, hero section, services or features section, testimonials or social proof, CTA section, footer
 - Each of the 3 must have a distinctly different layout, typography feel, and visual approach
 - Use real-looking placeholder content relevant to ${clientName}, not lorem ipsum
 - Make them production-quality, not wireframes
+- Fully responsive — design mobile-first, then layer up. Use Tailwind responsive prefixes (sm:, md:, lg:) on layout, typography, spacing, and any multi-column grids. The mockup must read cleanly at 375px (phone), 768px (tablet), and 1280px+ (desktop). No horizontal scroll on mobile. Stack columns on small screens; collapse the header nav into a mobile-friendly pattern (hamburger or stacked links) below md. Hero typography should scale down for small screens (e.g. text-4xl sm:text-5xl lg:text-6xl).
 
-Use the web_fetch tool to actually read each inspiration URL before designing, so the mockups draw on the real visual language of those sites.
+INSPIRATION AUDIT — REQUIRED BEFORE YOU DESIGN:
+Use the web_fetch tool on EACH inspiration URL above (one fetch per URL). After fetching, before writing any HTML, explicitly think through and write down (as plain prose, just for your own reasoning — this won't go in the final JSON) a "visual language audit" of each inspiration site covering:
+- **Color palette**: extract specific hex codes from the CSS, inline styles, computed values, or background colors. Distinguish primary brand color, supporting/accent colors, surface colors, and foreground/text colors.
+- **Typography**: the heading font family (with fallback stack), body font family, font weights used, and the type-scale character (e.g. "oversized serif display + grotesque body" or "tight sans-serif throughout").
+- **Photography / imagery style**: from <img> tags, alt text, src filenames, and any descriptive copy, infer the imagery vibe — moody/clinical, warm/lifestyle, product-flat, editorial, etc. Note dominant subjects.
+- **Layout DNA**: hero treatment (full-bleed, split, centered card?), grid choices, density, spacing rhythm, distinctive visual moves (oversized type, marquee, sticky nav, asymmetric grids, glassmorphism, hard borders, etc.).
+- **Overall aesthetic vibe**: 3-5 words capturing the mood (e.g. "moody clinical luxury", "warm artisanal minimalism", "high-energy maximalist editorial").
+
+Then, when designing the 3 mockups, each one MUST visibly reflect signals from the audit — color palette echoes, typography feel, photography mood, distinctive layout moves. Do NOT produce a generic "tasteful agency" design that ignores the inspirations. If the inspiration is dark and dramatic, at least one of the three mockups must lean dark and dramatic. If the inspiration uses oversized serif display type, that vocabulary should show up in your designs. The 3 mockups should be three distinct interpretations OF the inspirations, not three generic alternatives that ignore them.
+
+NOTE: web_fetch returns text/HTML, not pixels. You cannot see the actual photos, but you CAN read filenames, alt text, CSS background-image URLs, and any color/typography declared in the source — use all of those to ground the audit.
 
 Return ONLY a JSON object (no prose, no markdown fences) with this exact shape:
 { "mockups": [ { "name": "Design A", "html": "..." }, { "name": "Design B", "html": "..." }, { "name": "Design C", "html": "..." } ] }`;

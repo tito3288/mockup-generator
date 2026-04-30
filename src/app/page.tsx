@@ -4,6 +4,18 @@ import { useEffect, useState, type ChangeEvent, type FormEvent } from "react";
 
 type Mockup = { name: string; html: string };
 
+const STORAGE_KEY = "mockup-generator:state";
+
+type PersistedState = {
+  urls: [string, string, string];
+  currentSite: string;
+  logoDataUrl: string | null;
+  logoFileName: string;
+  brandColor: string;
+  clientName: string;
+  mockups: Mockup[];
+};
+
 export default function Home() {
   const [urls, setUrls] = useState<[string, string, string]>(["", "", ""]);
   const [currentSite, setCurrentSite] = useState("");
@@ -15,6 +27,42 @@ export default function Home() {
   const [elapsedSec, setElapsedSec] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [mockups, setMockups] = useState<Mockup[]>([]);
+  const [exportingIndex, setExportingIndex] = useState<number | null>(null);
+  const [exportError, setExportError] = useState<string | null>(null);
+  const [previewWidth, setPreviewWidth] = useState<"mobile" | "tablet" | "desktop">("desktop");
+
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem(STORAGE_KEY);
+      if (!raw) return;
+      const data = JSON.parse(raw) as Partial<PersistedState>;
+      if (
+        Array.isArray(data.urls) &&
+        data.urls.length === 3 &&
+        data.urls.every((u) => typeof u === "string")
+      ) {
+        setUrls(data.urls as [string, string, string]);
+      }
+      if (typeof data.currentSite === "string") setCurrentSite(data.currentSite);
+      if (typeof data.logoDataUrl === "string") setLogoDataUrl(data.logoDataUrl);
+      if (typeof data.logoFileName === "string") setLogoFileName(data.logoFileName);
+      if (typeof data.brandColor === "string") setBrandColor(data.brandColor);
+      if (typeof data.clientName === "string") setClientName(data.clientName);
+      if (
+        Array.isArray(data.mockups) &&
+        data.mockups.every(
+          (m) =>
+            m &&
+            typeof (m as Mockup).name === "string" &&
+            typeof (m as Mockup).html === "string",
+        )
+      ) {
+        setMockups(data.mockups as Mockup[]);
+      }
+    } catch {
+      // corrupted state — ignore
+    }
+  }, []);
 
   useEffect(() => {
     if (!isLoading) {
@@ -82,11 +130,66 @@ export default function Home() {
       if (!res.ok) {
         throw new Error(data?.error ?? "Generation failed");
       }
-      setMockups(data.mockups as Mockup[]);
+      const fresh = data.mockups as Mockup[];
+      setMockups(fresh);
+      try {
+        const persisted: PersistedState = {
+          urls,
+          currentSite,
+          logoDataUrl,
+          logoFileName,
+          brandColor,
+          clientName,
+          mockups: fresh,
+        };
+        sessionStorage.setItem(STORAGE_KEY, JSON.stringify(persisted));
+      } catch (storageErr) {
+        console.warn("Could not persist state to sessionStorage", storageErr);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Generation failed");
     } finally {
       setIsLoading(false);
+    }
+  }
+
+  async function handleUseThisDesign(mockup: Mockup, index: number) {
+    setExportingIndex(index);
+    setExportError(null);
+
+    try {
+      const res = await fetch("/api/export", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ html: mockup.html, clientName }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data?.error ?? "Export failed");
+      }
+
+      const { default: JSZip } = await import("jszip");
+      const zip = new JSZip();
+      zip.file("CLAUDE_KICKOFF.md", data.kickoff as string);
+      zip.file("BUILD_PROMPT.md", data.buildPrompt as string);
+      zip.file("BLUEPRINT.md", data.blueprint as string);
+      zip.file("theme.config.ts", data.themeConfig as string);
+      zip.folder("design")?.file("index.html", mockup.html);
+
+      const blob = await zip.generateAsync({ type: "blob" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${data.slug}-design.zip`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setExportError(err instanceof Error ? err.message : "Export failed");
+    } finally {
+      setExportingIndex(null);
     }
   }
 
@@ -121,6 +224,7 @@ export default function Home() {
         </header>
 
         <form
+          id="generate-form"
           onSubmit={handleSubmit}
           className="rounded-3xl border border-white/70 bg-white/85 p-5 shadow-xl shadow-slate-200/70 backdrop-blur sm:p-8"
         >
@@ -199,16 +303,19 @@ export default function Home() {
 
             <div>
               <label className="mb-2 block text-sm font-semibold text-slate-800">
-                Brand color (optional)
+                Brand colors (optional)
               </label>
               <input
                 type="text"
-                placeholder="#FF6600"
-                pattern="^#?[0-9A-Fa-f]{6}$"
+                placeholder="#FF6600, #003366, #FFFFFF"
+                pattern="^\s*#?[0-9A-Fa-f]{6}(\s*,\s*#?[0-9A-Fa-f]{6})*\s*$"
                 value={brandColor}
                 onChange={(e) => setBrandColor(e.target.value)}
                 className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-slate-400 focus:ring-4 focus:ring-slate-900/10"
               />
+              <p className="mt-1 text-xs text-slate-500">
+                One hex, or several comma-separated. Listed first = treated as primary.
+              </p>
             </div>
 
             <div>
@@ -234,7 +341,9 @@ export default function Home() {
             >
               {isLoading
                 ? `Generating… ${elapsedSec}s elapsed`
-                : "Generate Mockups"}
+                : mockups.length === 3
+                  ? "Generate Again"
+                  : "Generate Mockups"}
             </button>
             {isLoading && (
               <span className="text-sm leading-6 text-slate-500">
@@ -254,7 +363,7 @@ export default function Home() {
 
         {mockups.length === 3 && (
           <section className="mt-12">
-            <div className="mb-5 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+            <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
               <div>
                 <h2 className="text-2xl font-semibold tracking-tight text-slate-950">
                   Results
@@ -262,6 +371,46 @@ export default function Home() {
                 <p className="mt-1 text-sm text-slate-500">
                   Review each generated homepage at a wider, easier-to-scan preview size.
                 </p>
+              </div>
+              <button
+                type="submit"
+                form="generate-form"
+                disabled={isLoading || exportingIndex !== null}
+                className="inline-flex items-center justify-center rounded-2xl bg-slate-950 px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-slate-950/20 transition hover:-translate-y-0.5 hover:bg-slate-800 disabled:translate-y-0 disabled:cursor-not-allowed disabled:bg-slate-400 disabled:shadow-none"
+              >
+                {isLoading ? `Generating… ${elapsedSec}s elapsed` : "Generate Again"}
+              </button>
+            </div>
+            {exportError && (
+              <div className="mb-5 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+                {exportError}
+              </div>
+            )}
+            <div className="mb-5 flex flex-wrap items-center gap-3">
+              <span className="text-xs font-medium uppercase tracking-[0.2em] text-slate-400">
+                Preview
+              </span>
+              <div className="inline-flex rounded-2xl border border-slate-200 bg-white p-1 text-sm shadow-sm">
+                {(
+                  [
+                    { id: "mobile", label: "Mobile · 375" },
+                    { id: "tablet", label: "Tablet · 768" },
+                    { id: "desktop", label: "Desktop" },
+                  ] as const
+                ).map((opt) => (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() => setPreviewWidth(opt.id)}
+                    className={`rounded-xl px-3 py-1.5 text-sm font-medium transition ${
+                      previewWidth === opt.id
+                        ? "bg-slate-950 text-white shadow-sm"
+                        : "text-slate-600 hover:text-slate-950"
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
               </div>
             </div>
             <div className="grid grid-cols-1 gap-8">
@@ -279,20 +428,43 @@ export default function Home() {
                         {m.name}
                       </h3>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => downloadMockup(m)}
-                      className="inline-flex items-center justify-center rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:-translate-y-0.5 hover:border-slate-300 hover:text-slate-950"
-                    >
-                      Download HTML
-                    </button>
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                      <button
+                        type="button"
+                        onClick={() => handleUseThisDesign(m, i)}
+                        disabled={exportingIndex !== null}
+                        className="inline-flex items-center justify-center rounded-2xl bg-slate-950 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:-translate-y-0.5 hover:bg-slate-800 disabled:translate-y-0 disabled:cursor-not-allowed disabled:bg-slate-400 disabled:shadow-none"
+                      >
+                        {exportingIndex === i ? "Bundling…" : "Use This Design"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => downloadMockup(m)}
+                        disabled={exportingIndex !== null}
+                        className="inline-flex items-center justify-center rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:-translate-y-0.5 hover:border-slate-300 hover:text-slate-950 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0"
+                      >
+                        Download HTML
+                      </button>
+                    </div>
                   </div>
-                  <iframe
-                    title={m.name}
-                    srcDoc={m.html}
-                    sandbox="allow-scripts"
-                    className="h-[760px] w-full bg-white lg:h-[900px]"
-                  />
+                  <div className="flex justify-center bg-slate-100">
+                    <iframe
+                      title={m.name}
+                      srcDoc={m.html}
+                      sandbox="allow-scripts"
+                      style={
+                        previewWidth === "desktop"
+                          ? undefined
+                          : {
+                              width: previewWidth === "mobile" ? 375 : 768,
+                              maxWidth: "100%",
+                            }
+                      }
+                      className={`h-[760px] bg-white lg:h-[900px] ${
+                        previewWidth === "desktop" ? "w-full" : ""
+                      }`}
+                    />
+                  </div>
                 </div>
               ))}
             </div>
