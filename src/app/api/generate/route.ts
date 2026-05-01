@@ -14,7 +14,26 @@ type RequestBody = {
   logoDataUrl?: unknown;
   brandColor?: unknown;
   clientName?: unknown;
+  screenshots?: unknown;
 };
+
+type AllowedImageMediaType = "image/png" | "image/jpeg" | "image/gif" | "image/webp";
+
+const MAX_SCREENSHOTS = 3;
+const MAX_SCREENSHOT_BASE64_BYTES = 7 * 1024 * 1024;
+
+function parseScreenshotDataUrl(
+  dataUrl: string,
+): { mediaType: AllowedImageMediaType; base64: string } | null {
+  const match = dataUrl.match(
+    /^data:(image\/(png|jpeg|gif|webp));base64,(.+)$/,
+  );
+  if (!match) return null;
+  return {
+    mediaType: match[1] as AllowedImageMediaType,
+    base64: match[3],
+  };
+}
 
 function badRequest(error: string) {
   return NextResponse.json({ error }, { status: 400 });
@@ -25,10 +44,23 @@ function buildPrompt(args: {
   currentSite: string;
   brandColor: string;
   clientName: string;
+  screenshotCount: number;
 }) {
-  const { urls, currentSite, brandColor, clientName } = args;
+  const { urls, currentSite, brandColor, clientName, screenshotCount } = args;
   const colorLine = brandColor.trim() ? brandColor.trim() : "designer's choice";
+  const hasUrls = urls.length > 0;
   const urlLabel = urls.length === 1 ? "Inspiration URL" : "Inspiration URLs";
+  const urlLine = hasUrls
+    ? `${urlLabel}: ${urls.join(", ")}`
+    : "Inspiration URLs: (none provided — rely on the screenshots)";
+
+  const screenshotBlock =
+    screenshotCount > 0
+      ? `INSPIRATION SCREENSHOTS:
+You have been provided ${screenshotCount} reference screenshot${screenshotCount === 1 ? "" : "s"} above this text. These are NOT decorative — they are a primary visual reference for this project. Look at them carefully. Note color palette, typography style, photography mood, layout treatments, and overall vibe. The mockups must visibly echo what you see in these screenshots.
+
+`
+      : "";
 
   const currentSiteBlock = currentSite.trim()
     ? `CLIENT'S CURRENT WEBSITE (canonical brand truth): ${currentSite.trim()}
@@ -44,9 +76,9 @@ Treat anything from the current site as canonical. Use the inspiration URLs only
 `
     : "";
 
-  return `You are a senior web designer. Analyze these inspiration URLs and create 3 visually distinct homepage mockups for ${clientName}.
+  return `You are a senior web designer. Analyze the provided inspiration sources and create 3 visually distinct homepage mockups for ${clientName}.
 
-${currentSiteBlock}${urlLabel}: ${urls.join(", ")}
+${screenshotBlock}${currentSiteBlock}${urlLine}
 Brand colors: ${colorLine}
 
 LOGO IMAGE — IMPORTANT:
@@ -65,20 +97,47 @@ For each of the 3 mockups:
 - Make them production-quality, not wireframes
 - Fully responsive — design mobile-first, then layer up. Use Tailwind responsive prefixes (sm:, md:, lg:) on layout, typography, spacing, and any multi-column grids. The mockup must read cleanly at 375px (phone), 768px (tablet), and 1280px+ (desktop). No horizontal scroll on mobile. Stack columns on small screens; collapse the header nav into a mobile-friendly pattern (hamburger or stacked links) below md. Hero typography should scale down for small screens (e.g. text-4xl sm:text-5xl lg:text-6xl).
 
-INSPIRATION AUDIT — REQUIRED BEFORE YOU DESIGN:
-Use the web_fetch tool on EACH inspiration URL above (one fetch per URL). After fetching, before writing any HTML, explicitly think through and write down (as plain prose, just for your own reasoning — this won't go in the final JSON) a "visual language audit" of each inspiration site covering:
-- **Color palette**: extract specific hex codes from the CSS, inline styles, computed values, or background colors. Distinguish primary brand color, supporting/accent colors, surface colors, and foreground/text colors.
-- **Typography**: the heading font family (with fallback stack), body font family, font weights used, and the type-scale character (e.g. "oversized serif display + grotesque body" or "tight sans-serif throughout").
-- **Photography / imagery style**: from <img> tags, alt text, src filenames, and any descriptive copy, infer the imagery vibe — moody/clinical, warm/lifestyle, product-flat, editorial, etc. Note dominant subjects.
-- **Layout DNA**: hero treatment (full-bleed, split, centered card?), grid choices, density, spacing rhythm, distinctive visual moves (oversized type, marquee, sticky nav, asymmetric grids, glassmorphism, hard borders, etc.).
-- **Overall aesthetic vibe**: 3-5 words capturing the mood (e.g. "moody clinical luxury", "warm artisanal minimalism", "high-energy maximalist editorial").
+INSPIRATION AUDIT — INTERNAL REASONING ONLY:
+Before designing, internally analyze each inspiration source — URL${screenshotCount > 0 ? " or screenshot" : ""} — across these dimensions. Do NOT write the audit in your response; keep it as silent reasoning that informs the HTML you generate.
+${hasUrls ? "For each URL, use the web_fetch tool to read it (one fetch per URL) and reason from text/HTML/CSS. " : ""}${screenshotCount > 0 ? "For each screenshot above, perceive the rendered visuals directly — the screenshots are your strongest signal. " : ""}Dimensions to consider:
+- **Color palette**: specific hex codes${screenshotCount > 0 ? " (estimate from the screenshots; for URLs, extract from CSS or inline styles)" : " (extract from CSS, inline styles, computed values, or background colors)"}. Distinguish primary, accent, surface, and foreground.
+- **Typography**: heading font family + fallback stack, body font family, weights, type-scale character.
+- **Photography / imagery style**: ${screenshotCount > 0 ? "from screenshots: moody/clinical, warm/lifestyle, editorial, etc., plus dominant subjects. From URLs: infer from <img>, alt, filenames." : "from <img> tags, alt text, src filenames, and copy — infer the imagery vibe and dominant subjects."}
+- **Layout DNA**: hero treatment, grid choices, density, distinctive visual moves.
+- **Overall aesthetic vibe**: 3-5 words (e.g. "moody clinical luxury").
 
-Then, when designing the 3 mockups, each one MUST visibly reflect signals from the audit — color palette echoes, typography feel, photography mood, distinctive layout moves. Do NOT produce a generic "tasteful agency" design that ignores the inspirations. If the inspiration is dark and dramatic, at least one of the three mockups must lean dark and dramatic. If the inspiration uses oversized serif display type, that vocabulary should show up in your designs. The 3 mockups should be three distinct interpretations OF the inspirations, not three generic alternatives that ignore them.
+Each of the 3 mockups MUST visibly reflect signals from this internal audit — palette echoes, typography feel, photography mood, distinctive layout moves. Do NOT produce a generic "tasteful agency" design. If the inspiration is dark and dramatic, at least one mockup must lean dark and dramatic. The 3 should be three distinct interpretations OF the inspirations, not generic alternatives ignoring them.
 
-NOTE: web_fetch returns text/HTML, not pixels. You cannot see the actual photos, but you CAN read filenames, alt text, CSS background-image URLs, and any color/typography declared in the source — use all of those to ground the audit.
+${screenshotCount > 0 ? "NOTE: The screenshots are your richest input — you can actually see them. Treat them as the primary visual reference. URLs supplement with text/copy/structure." : "NOTE: web_fetch returns text/HTML, not pixels. Read filenames, alt text, CSS background-image URLs, and declared color/typography to ground the audit."}
 
-Return ONLY a JSON object (no prose, no markdown fences) with this exact shape:
-{ "mockups": [ { "name": "Design A", "html": "..." }, { "name": "Design B", "html": "..." }, { "name": "Design C", "html": "..." } ] }`;
+SIZE BUDGET — IMPORTANT:
+Each mockup HTML must be focused and lean — aim for under **10,000 characters** per mockup. Use Tailwind utility classes efficiently. Do NOT duplicate sections, do NOT include placeholder lorem-style filler, do NOT inline long SVGs when a small set of components will do.
+
+OUTPUT FORMAT — STRICT:
+Return EXACTLY three Markdown code blocks, each preceded by a Design header. Use tilde fences (~~~) — NOT backticks — to avoid escaping issues. Use this exact structure:
+
+## Design A
+~~~html
+<!DOCTYPE html>
+... full HTML for Design A ...
+</html>
+~~~
+
+## Design B
+~~~html
+<!DOCTYPE html>
+... full HTML for Design B ...
+</html>
+~~~
+
+## Design C
+~~~html
+<!DOCTYPE html>
+... full HTML for Design C ...
+</html>
+~~~
+
+The very first line of your response must be \`## Design A\`. No prose before, between, or after the blocks. No audit notes. No JSON. No explanations. Just the three Design headers and their fenced HTML blocks. The HTML inside each fence is raw — do NOT escape any characters; write HTML exactly as it should appear in the file.`;
 }
 
 function extractJson(text: string): unknown {
@@ -94,6 +153,44 @@ function extractJson(text: string): unknown {
     } catch {}
   }
 
+  // Find the JSON object that starts with { "mockups": ... and walk
+  // forward with brace balancing (respecting strings) to its matching }.
+  // This is robust to prose preceding or following the JSON.
+  const startMatch = trimmed.match(/\{\s*["']mockups["']/);
+  if (startMatch && typeof startMatch.index === "number") {
+    const start = startMatch.index;
+    let depth = 0;
+    let inString = false;
+    let escape = false;
+    for (let i = start; i < trimmed.length; i++) {
+      const c = trimmed[i];
+      if (escape) {
+        escape = false;
+        continue;
+      }
+      if (inString) {
+        if (c === "\\") escape = true;
+        else if (c === '"') inString = false;
+        continue;
+      }
+      if (c === '"') {
+        inString = true;
+        continue;
+      }
+      if (c === "{") depth++;
+      else if (c === "}") {
+        depth--;
+        if (depth === 0) {
+          try {
+            return JSON.parse(trimmed.slice(start, i + 1));
+          } catch {}
+          break;
+        }
+      }
+    }
+  }
+
+  // Last-resort fallback: outermost braces
   const first = trimmed.indexOf("{");
   const last = trimmed.lastIndexOf("}");
   if (first !== -1 && last > first) {
@@ -119,6 +216,32 @@ function isValidMockups(value: unknown): value is { mockups: Mockup[] } {
   );
 }
 
+// Primary parser: extract three mockups from Markdown-fenced code blocks.
+// Accepts both tilde (~~~) and backtick (```) fences. Looks for `## Design X`
+// (or similar) headers to name each block; falls back to Design A/B/C if absent.
+function parseMarkdownMockups(text: string): Mockup[] | null {
+  const fenceRegex = /(?:~~~|```)(?:html)?\s*\n([\s\S]*?)\n(?:~~~|```)/g;
+  const blocks: { html: string; index: number }[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = fenceRegex.exec(text)) !== null) {
+    const html = m[1].trim();
+    if (html.length > 0) blocks.push({ html, index: m.index });
+  }
+  if (blocks.length !== 3) return null;
+
+  return blocks.map((block, i) => {
+    const sliceStart = i === 0 ? 0 : blocks[i - 1].index;
+    const headerSearch = text.slice(sliceStart, block.index);
+    const headerMatch = headerSearch.match(
+      /##\s+([A-Z][A-Za-z0-9 _-]*[A-Za-z0-9])/,
+    );
+    const name = headerMatch
+      ? headerMatch[1].trim()
+      : `Design ${String.fromCharCode(65 + i)}`;
+    return { name, html: block.html };
+  });
+}
+
 export async function POST(req: Request) {
   let body: RequestBody;
   try {
@@ -127,7 +250,7 @@ export async function POST(req: Request) {
     return badRequest("Request body must be JSON");
   }
 
-  const { urls, currentSite, logoDataUrl, brandColor, clientName } = body;
+  const { urls, currentSite, logoDataUrl, brandColor, clientName, screenshots } = body;
 
   if (
     !Array.isArray(urls) ||
@@ -156,6 +279,26 @@ export async function POST(req: Request) {
   }
   const currentSiteStr = typeof currentSite === "string" ? currentSite : "";
 
+  const parsedScreenshots: { mediaType: AllowedImageMediaType; base64: string }[] = [];
+  if (screenshots !== undefined) {
+    if (!Array.isArray(screenshots) || !screenshots.every((s) => typeof s === "string")) {
+      return badRequest("Screenshots must be an array of image data URL strings");
+    }
+    if (screenshots.length > MAX_SCREENSHOTS) {
+      return badRequest(`Provide at most ${MAX_SCREENSHOTS} screenshots`);
+    }
+    for (const dataUrl of screenshots as string[]) {
+      if (dataUrl.length > MAX_SCREENSHOT_BASE64_BYTES) {
+        return badRequest("One of the screenshots is over 5MB");
+      }
+      const parsed = parseScreenshotDataUrl(dataUrl);
+      if (!parsed) {
+        return badRequest("Screenshots must be PNG, JPEG, GIF, or WEBP data URLs");
+      }
+      parsedScreenshots.push(parsed);
+    }
+  }
+
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
     return NextResponse.json(
@@ -169,6 +312,7 @@ export async function POST(req: Request) {
     currentSite: currentSiteStr,
     brandColor: colorStr,
     clientName: clientName.trim(),
+    screenshotCount: parsedScreenshots.length,
   });
 
   const client = new Anthropic({ apiKey });
@@ -177,10 +321,22 @@ export async function POST(req: Request) {
   console.log("[generate] request received", {
     clientName: clientName.trim(),
     inspirationUrls: cleanedUrls.length,
+    screenshotCount: parsedScreenshots.length,
     currentSite: currentSiteStr.trim() || null,
     logoBytes: logoDataUrl.length,
     promptChars: prompt.length,
   });
+
+  const userContent: Anthropic.Beta.BetaContentBlockParam[] = [
+    ...parsedScreenshots.map(
+      (s) =>
+        ({
+          type: "image",
+          source: { type: "base64", media_type: s.mediaType, data: s.base64 },
+        }) satisfies Anthropic.Beta.BetaImageBlockParam,
+    ),
+    { type: "text", text: prompt },
+  ];
 
   try {
     console.log("[generate] streaming Claude (model=claude-sonnet-4-5, max_tokens=48000, web_fetch max_uses=8, max_content_tokens=12000)…");
@@ -196,7 +352,7 @@ export async function POST(req: Request) {
           max_content_tokens: 12000,
         },
       ],
-      messages: [{ role: "user", content: prompt }],
+      messages: [{ role: "user", content: userContent }],
     });
 
     stream.on("connect", () => {
@@ -257,23 +413,39 @@ export async function POST(req: Request) {
       throw new Error("Model returned no text content");
     }
 
-    const parsed = extractJson(text);
-    if (!isValidMockups(parsed)) {
+    // Primary path: Markdown-fenced output (current prompt format).
+    // Fallback: legacy JSON output (in case the model reverts to it).
+    let rawMockups: Mockup[] | null = parseMarkdownMockups(text);
+    let parseSource: "markdown" | "json" = "markdown";
+    if (!rawMockups) {
+      try {
+        const parsed = extractJson(text);
+        if (isValidMockups(parsed)) {
+          rawMockups = parsed.mockups;
+          parseSource = "json";
+        }
+      } catch {
+        // fall through to the error below
+      }
+    }
+    if (!rawMockups) {
       throw new Error("Model response did not match the expected mockups shape");
     }
 
-    const mockups = parsed.mockups.map((m) => ({
+    const mockups = rawMockups.map((m) => ({
       name: m.name,
       html: m.html.split(LOGO_PLACEHOLDER).join(logoDataUrl),
     }));
-    const placeholderHits = parsed.mockups.map(
+    const placeholderHits = rawMockups.map(
       (m) => m.html.split(LOGO_PLACEHOLDER).length - 1,
     );
 
     const totalHtmlChars = mockups.reduce((n, m) => n + m.html.length, 0);
     console.log("[generate] success", {
       mockups: mockups.length,
+      parseSource,
       placeholderReplacementsPerMockup: placeholderHits,
+      screenshotCount: parsedScreenshots.length,
       totalHtmlChars,
       elapsedSec: ((Date.now() - startedAt) / 1000).toFixed(1),
     });

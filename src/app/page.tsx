@@ -3,8 +3,11 @@
 import { useEffect, useState, type ChangeEvent, type FormEvent } from "react";
 
 type Mockup = { name: string; html: string };
+type Screenshot = { name: string; dataUrl: string };
 
 const STORAGE_KEY = "mockup-generator:state";
+const MAX_SCREENSHOTS = 3;
+const MAX_SCREENSHOT_BYTES = 5 * 1024 * 1024;
 
 type PersistedState = {
   urls: [string, string, string];
@@ -13,6 +16,7 @@ type PersistedState = {
   logoFileName: string;
   brandColor: string;
   clientName: string;
+  screenshots: Screenshot[];
   mockups: Mockup[];
 };
 
@@ -30,6 +34,8 @@ export default function Home() {
   const [exportingIndex, setExportingIndex] = useState<number | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
   const [previewWidth, setPreviewWidth] = useState<"mobile" | "tablet" | "desktop">("desktop");
+  const [screenshots, setScreenshots] = useState<Screenshot[]>([]);
+  const [screenshotError, setScreenshotError] = useState<string | null>(null);
 
   useEffect(() => {
     try {
@@ -58,6 +64,18 @@ export default function Home() {
         )
       ) {
         setMockups(data.mockups as Mockup[]);
+      }
+      if (
+        Array.isArray(data.screenshots) &&
+        data.screenshots.every(
+          (s) =>
+            s &&
+            typeof (s as Screenshot).name === "string" &&
+            typeof (s as Screenshot).dataUrl === "string" &&
+            (s as Screenshot).dataUrl.startsWith("data:image/"),
+        )
+      ) {
+        setScreenshots((data.screenshots as Screenshot[]).slice(0, MAX_SCREENSHOTS));
       }
     } catch {
       // corrupted state — ignore
@@ -101,6 +119,66 @@ export default function Home() {
     reader.readAsDataURL(file);
   }
 
+  function handleScreenshotChange(e: ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(e.target.files ?? []);
+    e.target.value = "";
+    if (files.length === 0) return;
+
+    setScreenshotError(null);
+    const remaining = MAX_SCREENSHOTS - screenshots.length;
+    if (remaining <= 0) {
+      setScreenshotError(`Maximum ${MAX_SCREENSHOTS} screenshots`);
+      return;
+    }
+
+    const accepted: File[] = [];
+    const rejected: string[] = [];
+    for (const file of files.slice(0, remaining)) {
+      if (!file.type.startsWith("image/")) {
+        rejected.push(`${file.name} is not an image`);
+        continue;
+      }
+      if (file.size > MAX_SCREENSHOT_BYTES) {
+        rejected.push(`${file.name} is over 5MB`);
+        continue;
+      }
+      accepted.push(file);
+    }
+    if (files.length > remaining) {
+      rejected.push(`Only ${remaining} more accepted (max ${MAX_SCREENSHOTS} total)`);
+    }
+    if (rejected.length > 0) setScreenshotError(rejected.join("; "));
+
+    Promise.all(
+      accepted.map(
+        (file) =>
+          new Promise<Screenshot | null>((resolve) => {
+            const reader = new FileReader();
+            reader.onload = () => {
+              const result = reader.result;
+              if (typeof result === "string") {
+                resolve({ name: file.name, dataUrl: result });
+              } else {
+                resolve(null);
+              }
+            };
+            reader.onerror = () => resolve(null);
+            reader.readAsDataURL(file);
+          }),
+      ),
+    ).then((results) => {
+      const ok = results.filter((s): s is Screenshot => s !== null);
+      if (ok.length > 0) {
+        setScreenshots((prev) => [...prev, ...ok].slice(0, MAX_SCREENSHOTS));
+      }
+    });
+  }
+
+  function removeScreenshot(index: number) {
+    setScreenshots((prev) => prev.filter((_, i) => i !== index));
+    setScreenshotError(null);
+  }
+
   async function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setError(null);
@@ -123,6 +201,7 @@ export default function Home() {
           logoDataUrl,
           brandColor,
           clientName,
+          screenshots: screenshots.map((s) => s.dataUrl),
         }),
       });
 
@@ -140,6 +219,7 @@ export default function Home() {
           logoFileName,
           brandColor,
           clientName,
+          screenshots,
           mockups: fresh,
         };
         sessionStorage.setItem(STORAGE_KEY, JSON.stringify(persisted));
@@ -283,6 +363,56 @@ export default function Home() {
           <p className="-mt-3 text-xs text-slate-500">
             At least one inspiration URL required; up to three.
           </p>
+
+          <div>
+            <label className="mb-2 block text-sm font-semibold text-slate-800">
+              Inspiration screenshots (optional)
+            </label>
+            <input
+              type="file"
+              accept="image/*"
+              multiple
+              disabled={screenshots.length >= MAX_SCREENSHOTS}
+              onChange={handleScreenshotChange}
+              className="block w-full cursor-pointer rounded-2xl border border-dashed border-slate-300 bg-white px-4 py-3 text-sm text-slate-700 shadow-sm transition file:mr-3 file:rounded-xl file:border-0 file:bg-slate-950 file:px-3 file:py-2 file:text-sm file:font-medium file:text-white hover:border-slate-400 hover:file:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+            />
+            <p className="mt-1 text-xs text-slate-500">
+              Up to {MAX_SCREENSHOTS} images, max 5MB each. Claude actually sees these
+              (unlike the URLs above, which it only reads as text). Best paired with the
+              URLs to lock in both visual direction and real content.
+            </p>
+            {screenshotError && (
+              <p className="mt-1 text-xs text-red-600">{screenshotError}</p>
+            )}
+            {screenshots.length > 0 && (
+              <div className="mt-3 flex flex-wrap gap-3">
+                {screenshots.map((s, i) => (
+                  <div
+                    key={`${s.name}-${i}`}
+                    className="group relative h-24 w-32 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm"
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={s.dataUrl}
+                      alt={s.name}
+                      className="h-full w-full object-cover"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => removeScreenshot(i)}
+                      aria-label={`Remove ${s.name}`}
+                      className="absolute right-1 top-1 inline-flex h-6 w-6 items-center justify-center rounded-full bg-slate-950/80 text-white opacity-0 shadow transition hover:bg-slate-950 group-hover:opacity-100"
+                    >
+                      ×
+                    </button>
+                    <span className="absolute inset-x-0 bottom-0 truncate bg-slate-950/70 px-1.5 py-0.5 text-[10px] text-white">
+                      {s.name}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
 
           <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
             <div className="md:col-span-1">
