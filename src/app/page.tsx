@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useEffect, useState, type ChangeEvent, type FormEvent } from "react";
 
 type Mockup = { name: string; html: string };
@@ -33,7 +34,9 @@ export default function Home() {
   const [mockups, setMockups] = useState<Mockup[]>([]);
   const [exportingIndex, setExportingIndex] = useState<number | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
-  const [previewWidth, setPreviewWidth] = useState<"mobile" | "tablet" | "desktop">("desktop");
+  const [previewWidth, setPreviewWidth] = useState<
+    "mobile" | "tablet" | "desktop"
+  >("desktop");
   const [screenshots, setScreenshots] = useState<Screenshot[]>([]);
   const [screenshotError, setScreenshotError] = useState<string | null>(null);
 
@@ -49,9 +52,12 @@ export default function Home() {
       ) {
         setUrls(data.urls as [string, string, string]);
       }
-      if (typeof data.currentSite === "string") setCurrentSite(data.currentSite);
-      if (typeof data.logoDataUrl === "string") setLogoDataUrl(data.logoDataUrl);
-      if (typeof data.logoFileName === "string") setLogoFileName(data.logoFileName);
+      if (typeof data.currentSite === "string")
+        setCurrentSite(data.currentSite);
+      if (typeof data.logoDataUrl === "string")
+        setLogoDataUrl(data.logoDataUrl);
+      if (typeof data.logoFileName === "string")
+        setLogoFileName(data.logoFileName);
       if (typeof data.brandColor === "string") setBrandColor(data.brandColor);
       if (typeof data.clientName === "string") setClientName(data.clientName);
       if (
@@ -75,7 +81,9 @@ export default function Home() {
             (s as Screenshot).dataUrl.startsWith("data:image/"),
         )
       ) {
-        setScreenshots((data.screenshots as Screenshot[]).slice(0, MAX_SCREENSHOTS));
+        setScreenshots(
+          (data.screenshots as Screenshot[]).slice(0, MAX_SCREENSHOTS),
+        );
       }
     } catch {
       // corrupted state — ignore
@@ -145,7 +153,9 @@ export default function Home() {
       accepted.push(file);
     }
     if (files.length > remaining) {
-      rejected.push(`Only ${remaining} more accepted (max ${MAX_SCREENSHOTS} total)`);
+      rejected.push(
+        `Only ${remaining} more accepted (max ${MAX_SCREENSHOTS} total)`,
+      );
     }
     if (rejected.length > 0) setScreenshotError(rejected.join("; "));
 
@@ -274,7 +284,8 @@ export default function Home() {
   }
 
   function downloadMockup(mockup: Mockup) {
-    const safeClient = clientName.trim().replace(/[^a-z0-9-_]+/gi, "-") || "client";
+    const safeClient =
+      clientName.trim().replace(/[^a-z0-9-_]+/gi, "-") || "client";
     const safeName = mockup.name.replace(/[^a-z0-9-_]+/gi, "-");
     const blob = new Blob([mockup.html], { type: "text/html" });
     const url = URL.createObjectURL(blob);
@@ -290,6 +301,14 @@ export default function Home() {
   return (
     <div className="min-h-screen overflow-hidden bg-[radial-gradient(circle_at_top_left,_#dbeafe,_transparent_32%),linear-gradient(135deg,_#f8fafc_0%,_#eef2ff_48%,_#f8fafc_100%)] text-slate-950">
       <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8 lg:py-12">
+        <Image
+          src="/ADAPrimary.PNG"
+          alt="Alphadog Agency"
+          width={1800}
+          height={720}
+          priority
+          className="mx-auto mb-6 block h-12 w-auto sm:h-16 lg:h-24"
+        />
         <header className="mb-8 max-w-3xl">
           <div className="mb-4 inline-flex items-center rounded-full border border-white/70 bg-white/70 px-3 py-1 text-xs font-medium text-slate-600 shadow-sm backdrop-blur">
             AI-powered homepage concepts
@@ -298,8 +317,9 @@ export default function Home() {
             Mockup Generator
           </h1>
           <p className="mt-3 text-base leading-7 text-slate-600 sm:text-lg">
-            Generate three distinct homepage mockups from inspiration sites, brand
-            direction, and a logo, then review each concept at a more realistic width.
+            Generate three distinct homepage mockups from inspiration sites,
+            brand direction, and a logo, then review each concept at a more
+            realistic width.
           </p>
         </header>
 
@@ -314,7 +334,8 @@ export default function Home() {
                 Project Inputs
               </h2>
               <p className="mt-1 text-sm text-slate-500">
-                Add the core brand details and the sites Claude should use for direction.
+                Add the core brand details and the sites Claude should use for
+                direction.
               </p>
             </div>
             <span className="rounded-full bg-slate-950 px-3 py-1 text-xs font-medium text-white">
@@ -324,170 +345,181 @@ export default function Home() {
 
           <div className="space-y-6">
             <div>
-            <label className="block text-sm font-semibold text-slate-800 mb-2">
-              Client&rsquo;s current website (optional)
-            </label>
-            <input
-              type="url"
-              placeholder="https://acmecoffee.com — leave blank if they don't have one"
-              value={currentSite}
-              onChange={(e) => setCurrentSite(e.target.value)}
-              className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-slate-400 focus:ring-4 focus:ring-slate-900/10"
-            />
-            <p className="mt-1 text-xs text-slate-500">
-              If provided, Claude will fetch this site first to use the client&rsquo;s real
-              copy, voice, and palette as canonical brand truth.
+              <label className="block text-sm font-semibold text-slate-800 mb-2">
+                Client&rsquo;s current website (optional)
+              </label>
+              <input
+                type="url"
+                placeholder="https://acmecoffee.com — leave blank if they don't have one"
+                value={currentSite}
+                onChange={(e) => setCurrentSite(e.target.value)}
+                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-slate-400 focus:ring-4 focus:ring-slate-900/10"
+              />
+              <p className="mt-1 text-xs text-slate-500">
+                If provided, Claude will fetch this site first to use the
+                client&rsquo;s real copy, voice, and palette as canonical brand
+                truth.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+              {[0, 1, 2].map((i) => (
+                <div key={i}>
+                  <label className="mb-2 block text-sm font-semibold text-slate-800">
+                    Inspiration URL {i + 1}
+                    {i > 0 && (
+                      <span className="text-slate-400 font-normal">
+                        {" "}
+                        (optional)
+                      </span>
+                    )}
+                  </label>
+                  <input
+                    type="url"
+                    required={i === 0}
+                    placeholder="https://example.com"
+                    value={urls[i]}
+                    onChange={(e) =>
+                      handleUrlChange(i as 0 | 1 | 2, e.target.value)
+                    }
+                    className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-slate-400 focus:ring-4 focus:ring-slate-900/10"
+                  />
+                </div>
+              ))}
+            </div>
+            <p className="-mt-3 text-xs text-slate-500">
+              At least one inspiration URL required; up to three.
             </p>
-          </div>
 
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-            {[0, 1, 2].map((i) => (
-              <div key={i}>
-                <label className="mb-2 block text-sm font-semibold text-slate-800">
-                  Inspiration URL {i + 1}
-                  {i > 0 && (
-                    <span className="text-slate-400 font-normal"> (optional)</span>
-                  )}
-                </label>
-                <input
-                  type="url"
-                  required={i === 0}
-                  placeholder="https://example.com"
-                  value={urls[i]}
-                  onChange={(e) => handleUrlChange(i as 0 | 1 | 2, e.target.value)}
-                  className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-slate-400 focus:ring-4 focus:ring-slate-900/10"
-                />
-              </div>
-            ))}
-          </div>
-          <p className="-mt-3 text-xs text-slate-500">
-            At least one inspiration URL required; up to three.
-          </p>
-
-          <div>
-            <label className="mb-2 block text-sm font-semibold text-slate-800">
-              Inspiration screenshots (optional)
-            </label>
-            <input
-              type="file"
-              accept="image/*"
-              multiple
-              disabled={screenshots.length >= MAX_SCREENSHOTS}
-              onChange={handleScreenshotChange}
-              className="block w-full cursor-pointer rounded-2xl border border-dashed border-slate-300 bg-white px-4 py-3 text-sm text-slate-700 shadow-sm transition file:mr-3 file:rounded-xl file:border-0 file:bg-slate-950 file:px-3 file:py-2 file:text-sm file:font-medium file:text-white hover:border-slate-400 hover:file:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
-            />
-            <p className="mt-1 text-xs text-slate-500">
-              Up to {MAX_SCREENSHOTS} images, max 5MB each. Claude actually sees these
-              (unlike the URLs above, which it only reads as text). Best paired with the
-              URLs to lock in both visual direction and real content.
-            </p>
-            {screenshotError && (
-              <p className="mt-1 text-xs text-red-600">{screenshotError}</p>
-            )}
-            {screenshots.length > 0 && (
-              <div className="mt-3 flex flex-wrap gap-3">
-                {screenshots.map((s, i) => (
-                  <div
-                    key={`${s.name}-${i}`}
-                    className="group relative h-24 w-32 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm"
-                  >
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={s.dataUrl}
-                      alt={s.name}
-                      className="h-full w-full object-cover"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => removeScreenshot(i)}
-                      aria-label={`Remove ${s.name}`}
-                      className="absolute right-1 top-1 inline-flex h-6 w-6 items-center justify-center rounded-full bg-slate-950/80 text-white opacity-0 shadow transition hover:bg-slate-950 group-hover:opacity-100"
-                    >
-                      ×
-                    </button>
-                    <span className="absolute inset-x-0 bottom-0 truncate bg-slate-950/70 px-1.5 py-0.5 text-[10px] text-white">
-                      {s.name}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-            <div className="md:col-span-1">
+            <div>
               <label className="mb-2 block text-sm font-semibold text-slate-800">
-                Logo
+                Inspiration screenshots (optional)
               </label>
               <input
                 type="file"
                 accept="image/*"
-                required
-                onChange={handleLogoChange}
-                className="block w-full cursor-pointer rounded-2xl border border-dashed border-slate-300 bg-white px-4 py-3 text-sm text-slate-700 shadow-sm transition file:mr-3 file:rounded-xl file:border-0 file:bg-slate-950 file:px-3 file:py-2 file:text-sm file:font-medium file:text-white hover:border-slate-400 hover:file:bg-slate-800"
+                multiple
+                disabled={screenshots.length >= MAX_SCREENSHOTS}
+                onChange={handleScreenshotChange}
+                className="block w-full cursor-pointer rounded-2xl border border-dashed border-slate-300 bg-white px-4 py-3 text-sm text-slate-700 shadow-sm transition file:mr-3 file:rounded-xl file:border-0 file:bg-slate-950 file:px-3 file:py-2 file:text-sm file:font-medium file:text-white hover:border-slate-400 hover:file:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
               />
-              {logoFileName && (
-                <p className="mt-1 text-xs text-slate-500 truncate">{logoFileName}</p>
+              <p className="mt-1 text-xs text-slate-500">
+                Up to {MAX_SCREENSHOTS} images, max 5MB each. Claude actually
+                sees these (unlike the URLs above, which it only reads as text).
+                Best paired with the URLs to lock in both visual direction and
+                real content.
+              </p>
+              {screenshotError && (
+                <p className="mt-1 text-xs text-red-600">{screenshotError}</p>
+              )}
+              {screenshots.length > 0 && (
+                <div className="mt-3 flex flex-wrap gap-3">
+                  {screenshots.map((s, i) => (
+                    <div
+                      key={`${s.name}-${i}`}
+                      className="group relative h-24 w-32 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm"
+                    >
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={s.dataUrl}
+                        alt={s.name}
+                        className="h-full w-full object-cover"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => removeScreenshot(i)}
+                        aria-label={`Remove ${s.name}`}
+                        className="absolute right-1 top-1 inline-flex h-6 w-6 items-center justify-center rounded-full bg-slate-950/80 text-white opacity-0 shadow transition hover:bg-slate-950 group-hover:opacity-100"
+                      >
+                        ×
+                      </button>
+                      <span className="absolute inset-x-0 bottom-0 truncate bg-slate-950/70 px-1.5 py-0.5 text-[10px] text-white">
+                        {s.name}
+                      </span>
+                    </div>
+                  ))}
+                </div>
               )}
             </div>
 
-            <div>
-              <label className="mb-2 block text-sm font-semibold text-slate-800">
-                Brand colors (optional)
-              </label>
-              <input
-                type="text"
-                placeholder="#FF6600, #003366, #FFFFFF"
-                pattern="^\s*#?[0-9A-Fa-f]{6}(\s*,\s*#?[0-9A-Fa-f]{6})*\s*$"
-                value={brandColor}
-                onChange={(e) => setBrandColor(e.target.value)}
-                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-slate-400 focus:ring-4 focus:ring-slate-900/10"
-              />
-              <p className="mt-1 text-xs text-slate-500">
-                One hex, or several comma-separated. Listed first = treated as primary.
-              </p>
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+              <div className="md:col-span-1">
+                <label className="mb-2 block text-sm font-semibold text-slate-800">
+                  Logo
+                </label>
+                <input
+                  type="file"
+                  accept="image/*"
+                  required
+                  onChange={handleLogoChange}
+                  className="block w-full cursor-pointer rounded-2xl border border-dashed border-slate-300 bg-white px-4 py-3 text-sm text-slate-700 shadow-sm transition file:mr-3 file:rounded-xl file:border-0 file:bg-slate-950 file:px-3 file:py-2 file:text-sm file:font-medium file:text-white hover:border-slate-400 hover:file:bg-slate-800"
+                />
+                {logoFileName && (
+                  <p className="mt-1 text-xs text-slate-500 truncate">
+                    {logoFileName}
+                  </p>
+                )}
+              </div>
+
+              <div>
+                <label className="mb-2 block text-sm font-semibold text-slate-800">
+                  Brand colors (optional)
+                </label>
+                <input
+                  type="text"
+                  placeholder="#FF6600, #003366, #FFFFFF"
+                  pattern="^\s*#?[0-9A-Fa-f]{6}(\s*,\s*#?[0-9A-Fa-f]{6})*\s*$"
+                  value={brandColor}
+                  onChange={(e) => setBrandColor(e.target.value)}
+                  className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-slate-400 focus:ring-4 focus:ring-slate-900/10"
+                />
+                <p className="mt-1 text-xs text-slate-500">
+                  One hex, or several comma-separated. Listed first = treated as
+                  primary.
+                </p>
+              </div>
+
+              <div>
+                <label className="mb-2 block text-sm font-semibold text-slate-800">
+                  Client name
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="Acme Coffee Roasters"
+                  value={clientName}
+                  onChange={(e) => setClientName(e.target.value)}
+                  className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-slate-400 focus:ring-4 focus:ring-slate-900/10"
+                />
+              </div>
             </div>
 
-            <div>
-              <label className="mb-2 block text-sm font-semibold text-slate-800">
-                Client name
-              </label>
-              <input
-                type="text"
-                required
-                placeholder="Acme Coffee Roasters"
-                value={clientName}
-                onChange={(e) => setClientName(e.target.value)}
-                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-slate-400 focus:ring-4 focus:ring-slate-900/10"
-              />
+            <div className="flex flex-col gap-3 pt-2 sm:flex-row sm:items-center">
+              <button
+                type="submit"
+                disabled={isLoading}
+                className="inline-flex items-center justify-center rounded-2xl bg-slate-950 px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-slate-950/20 transition hover:-translate-y-0.5 hover:bg-slate-800 disabled:translate-y-0 disabled:cursor-not-allowed disabled:bg-slate-400 disabled:shadow-none"
+              >
+                {isLoading
+                  ? `Generating… ${elapsedSec}s elapsed`
+                  : mockups.length === 3
+                    ? "Generate Again"
+                    : "Generate Mockups"}
+              </button>
+              {isLoading && (
+                <span className="text-sm leading-6 text-slate-500">
+                  Claude is fetching your inspiration sites and designing 3
+                  layouts (typically 60–120s; see the dev terminal for live
+                  progress).
+                </span>
+              )}
             </div>
-          </div>
 
-          <div className="flex flex-col gap-3 pt-2 sm:flex-row sm:items-center">
-            <button
-              type="submit"
-              disabled={isLoading}
-              className="inline-flex items-center justify-center rounded-2xl bg-slate-950 px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-slate-950/20 transition hover:-translate-y-0.5 hover:bg-slate-800 disabled:translate-y-0 disabled:cursor-not-allowed disabled:bg-slate-400 disabled:shadow-none"
-            >
-              {isLoading
-                ? `Generating… ${elapsedSec}s elapsed`
-                : mockups.length === 3
-                  ? "Generate Again"
-                  : "Generate Mockups"}
-            </button>
-            {isLoading && (
-              <span className="text-sm leading-6 text-slate-500">
-                Claude is fetching your inspiration sites and designing 3 layouts
-                (typically 60–120s; see the dev terminal for live progress).
-              </span>
+            {error && (
+              <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+                {error}
+              </div>
             )}
-          </div>
-
-          {error && (
-            <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
-              {error}
-            </div>
-          )}
           </div>
         </form>
 
@@ -499,7 +531,8 @@ export default function Home() {
                   Results
                 </h2>
                 <p className="mt-1 text-sm text-slate-500">
-                  Review each generated homepage at a wider, easier-to-scan preview size.
+                  Review each generated homepage at a wider, easier-to-scan
+                  preview size.
                 </p>
               </div>
               <button
@@ -508,7 +541,9 @@ export default function Home() {
                 disabled={isLoading || exportingIndex !== null}
                 className="inline-flex items-center justify-center rounded-2xl bg-slate-950 px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-slate-950/20 transition hover:-translate-y-0.5 hover:bg-slate-800 disabled:translate-y-0 disabled:cursor-not-allowed disabled:bg-slate-400 disabled:shadow-none"
               >
-                {isLoading ? `Generating… ${elapsedSec}s elapsed` : "Generate Again"}
+                {isLoading
+                  ? `Generating… ${elapsedSec}s elapsed`
+                  : "Generate Again"}
               </button>
             </div>
             {exportError && (
