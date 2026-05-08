@@ -5,10 +5,13 @@ import { useEffect, useState, type ChangeEvent, type FormEvent } from "react";
 
 type Mockup = { name: string; html: string };
 type Screenshot = { name: string; dataUrl: string };
+type LogoBackground = "light" | "dark" | "either";
+type GenerationProvider = "anthropic" | "openai";
 
 const STORAGE_KEY = "mockup-generator:state";
 const MAX_SCREENSHOTS = 3;
 const MAX_SCREENSHOT_BYTES = 5 * 1024 * 1024;
+const MAX_HERO_PHOTO_BYTES = 5 * 1024 * 1024;
 
 type PersistedState = {
   urls: [string, string, string];
@@ -18,6 +21,11 @@ type PersistedState = {
   brandColor: string;
   clientName: string;
   screenshots: Screenshot[];
+  heroPhotoDataUrl: string | null;
+  heroPhotoFileName: string;
+  heroDirection: string;
+  logoBackground: LogoBackground;
+  generationProvider: GenerationProvider;
   mockups: Mockup[];
 };
 
@@ -39,6 +47,13 @@ export default function Home() {
   >("desktop");
   const [screenshots, setScreenshots] = useState<Screenshot[]>([]);
   const [screenshotError, setScreenshotError] = useState<string | null>(null);
+  const [heroPhotoDataUrl, setHeroPhotoDataUrl] = useState<string | null>(null);
+  const [heroPhotoFileName, setHeroPhotoFileName] = useState<string>("");
+  const [heroDirection, setHeroDirection] = useState("");
+  const [logoBackground, setLogoBackground] =
+    useState<LogoBackground>("either");
+  const [generationProvider, setGenerationProvider] =
+    useState<GenerationProvider>("anthropic");
 
   useEffect(() => {
     try {
@@ -85,6 +100,25 @@ export default function Home() {
           (data.screenshots as Screenshot[]).slice(0, MAX_SCREENSHOTS),
         );
       }
+      if (typeof data.heroPhotoDataUrl === "string")
+        setHeroPhotoDataUrl(data.heroPhotoDataUrl);
+      if (typeof data.heroPhotoFileName === "string")
+        setHeroPhotoFileName(data.heroPhotoFileName);
+      if (typeof data.heroDirection === "string")
+        setHeroDirection(data.heroDirection);
+      if (
+        data.logoBackground === "light" ||
+        data.logoBackground === "dark" ||
+        data.logoBackground === "either"
+      ) {
+        setLogoBackground(data.logoBackground);
+      }
+      if (
+        data.generationProvider === "anthropic" ||
+        data.generationProvider === "openai"
+      ) {
+        setGenerationProvider(data.generationProvider);
+      }
     } catch {
       // corrupted state — ignore
     }
@@ -124,6 +158,30 @@ export default function Home() {
       if (typeof result === "string") setLogoDataUrl(result);
     };
     reader.onerror = () => setError("Could not read the selected logo file");
+    reader.readAsDataURL(file);
+  }
+
+  function handleHeroPhotoChange(e: ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) {
+      setHeroPhotoDataUrl(null);
+      setHeroPhotoFileName("");
+      return;
+    }
+    if (file.size > MAX_HERO_PHOTO_BYTES) {
+      setError("Hero photo is over 5MB");
+      e.target.value = "";
+      return;
+    }
+    setError(null);
+    setHeroPhotoFileName(file.name);
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result;
+      if (typeof result === "string") setHeroPhotoDataUrl(result);
+    };
+    reader.onerror = () =>
+      setError("Could not read the selected hero photo file");
     reader.readAsDataURL(file);
   }
 
@@ -212,6 +270,10 @@ export default function Home() {
           brandColor,
           clientName,
           screenshots: screenshots.map((s) => s.dataUrl),
+          heroPhotoDataUrl,
+          heroDirection,
+          logoBackground,
+          generationProvider,
         }),
       });
 
@@ -230,6 +292,11 @@ export default function Home() {
           brandColor,
           clientName,
           screenshots,
+          heroPhotoDataUrl,
+          heroPhotoFileName,
+          heroDirection,
+          logoBackground,
+          generationProvider,
           mockups: fresh,
         };
         sessionStorage.setItem(STORAGE_KEY, JSON.stringify(persisted));
@@ -334,8 +401,8 @@ export default function Home() {
                 Project Inputs
               </h2>
               <p className="mt-1 text-sm text-slate-500">
-                Add the core brand details and the sites Claude should use for
-                direction.
+                Add the core brand details and the sites the selected AI should
+                use for direction.
               </p>
             </div>
             <span className="rounded-full bg-slate-950 px-3 py-1 text-xs font-medium text-white">
@@ -344,6 +411,67 @@ export default function Home() {
           </div>
 
           <div className="space-y-6">
+            <fieldset className="rounded-2xl border border-slate-200/70 bg-white/60 p-4 sm:p-5">
+              <legend className="text-sm font-semibold tracking-tight text-slate-900">
+                Generation engine
+              </legend>
+              <p className="mt-1 text-xs text-slate-500">
+                Anthropic remains the default. OpenAI uses GPT-5.5 with web
+                search for a second high-quality generation path.
+              </p>
+              <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                {(
+                  [
+                    {
+                      id: "anthropic",
+                      title: "Anthropic Claude",
+                      description: "Default current flow with Claude Sonnet 4.5",
+                    },
+                    {
+                      id: "openai",
+                      title: "OpenAI GPT-5.5",
+                      description:
+                        "Alternate flow using Responses API + web search",
+                    },
+                  ] as const
+                ).map((opt) => (
+                  <label
+                    key={opt.id}
+                    className={`cursor-pointer rounded-2xl border p-4 transition ${
+                      generationProvider === opt.id
+                        ? "border-slate-950 bg-slate-950 text-white shadow-lg shadow-slate-950/15"
+                        : "border-slate-200 bg-white text-slate-900 hover:border-slate-300"
+                    }`}
+                  >
+                    <span className="flex items-start gap-3">
+                      <input
+                        type="radio"
+                        name="generationProvider"
+                        value={opt.id}
+                        checked={generationProvider === opt.id}
+                        onChange={() => setGenerationProvider(opt.id)}
+                        className="mt-1"
+                      />
+                      <span>
+                        <span className="block text-sm font-semibold">
+                          {opt.title}
+                        </span>
+                        <span
+                          className={`mt-1 block text-xs leading-5 ${
+                            generationProvider === opt.id
+                              ? "text-slate-200"
+                              : "text-slate-500"
+                          }`}
+                        >
+                          {opt.description}
+                        </span>
+                      </span>
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+
             <div>
               <label className="block text-sm font-semibold text-slate-800 mb-2">
                 Client&rsquo;s current website (optional)
@@ -356,9 +484,9 @@ export default function Home() {
                 className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-slate-400 focus:ring-4 focus:ring-slate-900/10"
               />
               <p className="mt-1 text-xs text-slate-500">
-                If provided, Claude will fetch this site first to use the
-                client&rsquo;s real copy, voice, and palette as canonical brand
-                truth.
+                If provided, the selected engine will inspect this site first to
+                use the client&rsquo;s real copy, voice, and palette as canonical
+                brand truth.
               </p>
             </div>
 
@@ -391,9 +519,61 @@ export default function Home() {
               At least one inspiration URL required; up to three.
             </p>
 
+            <div className="rounded-2xl border border-slate-200/70 bg-white/60 p-4 sm:p-5">
+              <div className="mb-4">
+                <h3 className="text-sm font-semibold tracking-tight text-slate-900">
+                  Hero customization (optional)
+                </h3>
+                <p className="mt-1 text-xs text-slate-500">
+                  Lock down the hero photo and composition. The same photo
+                  appears across all three concepts; the direction text shapes
+                  how it&rsquo;s framed.
+                </p>
+              </div>
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                <div>
+                  <label className="mb-2 block text-sm font-semibold text-slate-800">
+                    Hero photo
+                  </label>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={handleHeroPhotoChange}
+                    className="block w-full cursor-pointer rounded-2xl border border-dashed border-slate-300 bg-white px-4 py-3 text-sm text-slate-700 shadow-sm transition file:mr-3 file:rounded-xl file:border-0 file:bg-slate-950 file:px-3 file:py-2 file:text-sm file:font-medium file:text-white hover:border-slate-400 hover:file:bg-slate-800"
+                  />
+                  {heroPhotoFileName && (
+                    <p className="mt-1 text-xs text-slate-500 truncate">
+                      {heroPhotoFileName}
+                    </p>
+                  )}
+                  <p className="mt-1 text-xs text-slate-500">
+                    A real client photo for the hero (max 5MB). Used in all
+                    three concepts; variation comes from layout, not photo.
+                  </p>
+                </div>
+
+                <div>
+                  <label className="mb-2 block text-sm font-semibold text-slate-800">
+                    Hero direction
+                  </label>
+                  <textarea
+                    rows={3}
+                    placeholder="Split layout with photo on right, big serif headline, soft gradient overlay over image"
+                    value={heroDirection}
+                    onChange={(e) => setHeroDirection(e.target.value)}
+                    className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-slate-400 focus:ring-4 focus:ring-slate-900/10"
+                  />
+                  <p className="mt-1 text-xs text-slate-500">
+                    Compositional notes only — the AI designs the rest. Same
+                    direction applies to all three concepts.
+                  </p>
+                </div>
+              </div>
+            </div>
+
             <div>
               <label className="mb-2 block text-sm font-semibold text-slate-800">
-                Inspiration screenshots (optional)
+                Inspiration screenshots for the whole site (optional)
               </label>
               <input
                 type="file"
@@ -404,10 +584,10 @@ export default function Home() {
                 className="block w-full cursor-pointer rounded-2xl border border-dashed border-slate-300 bg-white px-4 py-3 text-sm text-slate-700 shadow-sm transition file:mr-3 file:rounded-xl file:border-0 file:bg-slate-950 file:px-3 file:py-2 file:text-sm file:font-medium file:text-white hover:border-slate-400 hover:file:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
               />
               <p className="mt-1 text-xs text-slate-500">
-                Up to {MAX_SCREENSHOTS} images, max 5MB each. Claude actually
-                sees these (unlike the URLs above, which it only reads as text).
-                Best paired with the URLs to lock in both visual direction and
-                real content.
+                Up to {MAX_SCREENSHOTS} images, max 5MB each. The selected
+                engine actually sees these (unlike the URLs above, which it
+                reads as text/search context). Best paired with the URLs to lock
+                in both visual direction and real content.
               </p>
               {screenshotError && (
                 <p className="mt-1 text-xs text-red-600">{screenshotError}</p>
@@ -459,6 +639,32 @@ export default function Home() {
                     {logoFileName}
                   </p>
                 )}
+                <fieldset className="mt-3">
+                  <legend className="text-xs font-medium text-slate-600">
+                    Logo works best on
+                  </legend>
+                  <div className="mt-1.5 flex gap-3 text-xs text-slate-700">
+                    {(["light", "dark", "either"] as const).map((opt) => (
+                      <label
+                        key={opt}
+                        className="inline-flex items-center gap-1.5"
+                      >
+                        <input
+                          type="radio"
+                          name="logoBackground"
+                          value={opt}
+                          checked={logoBackground === opt}
+                          onChange={() => setLogoBackground(opt)}
+                        />
+                        {opt === "light"
+                          ? "light bg"
+                          : opt === "dark"
+                            ? "dark bg"
+                            : "either"}
+                      </label>
+                    ))}
+                  </div>
+                </fieldset>
               </div>
 
               <div>
@@ -508,9 +714,9 @@ export default function Home() {
               </button>
               {isLoading && (
                 <span className="text-sm leading-6 text-slate-500">
-                  Claude is fetching your inspiration sites and designing 3
-                  layouts (typically 60–120s; see the dev terminal for live
-                  progress).
+                  {generationProvider === "openai" ? "OpenAI" : "Claude"} is
+                  fetching your inspiration sites and designing 3 layouts
+                  (typically 60–120s; see the dev terminal for live progress).
                 </span>
               )}
             </div>

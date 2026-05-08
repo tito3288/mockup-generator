@@ -7,6 +7,9 @@ export const maxDuration = 300;
 type Mockup = { name: string; html: string };
 
 const LOGO_PLACEHOLDER = "__LOGO_DATA_URL__";
+const HERO_IMAGE_PLACEHOLDER = "__HERO_IMAGE_DATA_URL__";
+const DEFAULT_OPENAI_MODEL = "gpt-5.5";
+const DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-4-6";
 
 type RequestBody = {
   urls?: unknown;
@@ -15,12 +18,21 @@ type RequestBody = {
   brandColor?: unknown;
   clientName?: unknown;
   screenshots?: unknown;
+  heroPhotoDataUrl?: unknown;
+  heroDirection?: unknown;
+  logoBackground?: unknown;
+  generationProvider?: unknown;
 };
 
+type LogoBackground = "light" | "dark" | "either";
+type GenerationProvider = "anthropic" | "openai";
+
 type AllowedImageMediaType = "image/png" | "image/jpeg" | "image/gif" | "image/webp";
+type ParsedScreenshot = { mediaType: AllowedImageMediaType; base64: string };
 
 const MAX_SCREENSHOTS = 3;
 const MAX_SCREENSHOT_BASE64_BYTES = 7 * 1024 * 1024;
+const MAX_HERO_PHOTO_BASE64_BYTES = 7 * 1024 * 1024;
 
 function parseScreenshotDataUrl(
   dataUrl: string,
@@ -45,8 +57,28 @@ function buildPrompt(args: {
   brandColor: string;
   clientName: string;
   screenshotCount: number;
+  hasHeroPhoto: boolean;
+  heroDirection: string;
+  logoBackground: LogoBackground;
+  generationProvider: GenerationProvider;
 }) {
-  const { urls, currentSite, brandColor, clientName, screenshotCount } = args;
+  const {
+    urls,
+    currentSite,
+    brandColor,
+    clientName,
+    screenshotCount,
+    hasHeroPhoto,
+    heroDirection,
+    logoBackground,
+    generationProvider,
+  } = args;
+  const sourceToolName =
+    generationProvider === "openai" ? "web_search" : "web_fetch";
+  const sourceToolAction =
+    generationProvider === "openai"
+      ? "use the web_search tool to inspect this site FIRST"
+      : "use the web_fetch tool to read this site FIRST";
   const colorLine = brandColor.trim() ? brandColor.trim() : "designer's choice";
   const hasUrls = urls.length > 0;
   const urlLabel = urls.length === 1 ? "Inspiration URL" : "Inspiration URLs";
@@ -65,7 +97,7 @@ You have been provided ${screenshotCount} reference screenshot${screenshotCount 
   const currentSiteBlock = currentSite.trim()
     ? `CLIENT'S CURRENT WEBSITE (canonical brand truth): ${currentSite.trim()}
 
-Before designing, use the web_fetch tool to read this site FIRST. Extract:
+Before designing, ${sourceToolAction}. Extract:
 - Real brand voice and tone of copy
 - Actual services/products they offer (use these — do NOT invent)
 - Existing color palette and typography choices
@@ -75,6 +107,32 @@ Treat anything from the current site as canonical. Use the inspiration URLs only
 
 `
     : "";
+
+  const heroPhotoBlock = hasHeroPhoto
+    ? `HERO IMAGE — IMPORTANT:
+The user has provided a real client photograph that MUST appear in the hero section of all 3 mockups. Use the literal placeholder string \`${HERO_IMAGE_PLACEHOLDER}\` as the src wherever the hero photo appears. Example:
+<img src="${HERO_IMAGE_PLACEHOLDER}" alt="${clientName}" class="..." />
+Treat this image as a fixed asset: do NOT swap it for stock photos, do NOT use background-image URLs, do NOT generate alternative imagery for the hero in any of the 3 concepts. The same photo appears in all three. The variation between concepts must come from layout, composition, framing, overlays, gradients, headline treatment — not from changing the photo. Do NOT generate base64 yourself; the server will substitute the real image into every \`${HERO_IMAGE_PLACEHOLDER}\` after you finish.
+
+`
+    : "";
+
+  const heroDirectionBlock = heroDirection
+    ? `HERO DIRECTION (user's compositional notes for the hero section):
+${heroDirection}
+
+Apply this direction to the hero of each concept. The three concepts may interpret it differently (e.g. one literal, one looser), but all must respect the user's intent.
+
+`
+    : "";
+
+  const logoBgBlock =
+    logoBackground === "either"
+      ? ""
+      : `LOGO BACKGROUND CONSTRAINT — IMPORTANT:
+The client's logo is designed for ${logoBackground === "dark" ? "DARK" : "LIGHT"} backgrounds (its marks are ${logoBackground === "dark" ? "light/white" : "dark"}). In ALL 3 mockups, the header containing the logo MUST use a ${logoBackground === "dark" ? "dark or strongly colored" : "light"} background, OR the logo must sit on a contrasting backing shape, so it remains clearly visible. Never place the logo on a ${logoBackground === "dark" ? "white or light" : "dark"} header where its marks would disappear. This constraint applies to all three concepts without exception.
+
+`;
 
   return `You are a senior web designer. Analyze the provided inspiration sources and create 3 visually distinct homepage mockups for ${clientName}.
 
@@ -87,7 +145,7 @@ Wherever you want the client's logo to appear (typically in the header), use the
 Make the header logo visually prominent — roughly 56–72px tall on desktop (Tailwind h-14 to h-18, or larger if the design calls for it). Avoid sizes smaller than h-12 in the header; a tiny logo reads as unfinished. Always pair height with \`w-auto\` so the aspect ratio is preserved. Footer or inline mentions can be smaller.
 Do NOT generate a base64 or data URL yourself. The server will substitute the real logo into every occurrence of \`${LOGO_PLACEHOLDER}\` after you finish.
 
-For each of the 3 mockups:
+${heroPhotoBlock}${heroDirectionBlock}${logoBgBlock}For each of the 3 mockups:
 - Make it a complete standalone HTML file
 - Include the mobile viewport tag in <head>: <meta name="viewport" content="width=device-width, initial-scale=1">
 - Use Tailwind CSS via CDN
@@ -95,11 +153,22 @@ For each of the 3 mockups:
 - Each of the 3 must have a distinctly different layout, typography feel, and visual approach
 - Use real-looking placeholder content relevant to ${clientName}, not lorem ipsum
 - Make them production-quality, not wireframes
-- Fully responsive — design mobile-first, then layer up. Use Tailwind responsive prefixes (sm:, md:, lg:) on layout, typography, spacing, and any multi-column grids. The mockup must read cleanly at 375px (phone), 768px (tablet), and 1280px+ (desktop). No horizontal scroll on mobile. Stack columns on small screens; collapse the header nav into a mobile-friendly pattern (hamburger or stacked links) below md. Hero typography should scale down for small screens (e.g. text-4xl sm:text-5xl lg:text-6xl).
+- Fully responsive — design mobile-first, then layer up. Use Tailwind responsive prefixes (sm:, md:, lg:) on layout, typography, spacing, and any multi-column grids. The mockup must read cleanly at 375px (phone), 768px (tablet), and 1280px+ (desktop). No horizontal scroll on mobile. Stack columns on small screens. Hero typography should scale down for small screens (e.g. text-4xl sm:text-5xl lg:text-6xl).
+
+MOBILE HEADER REQUIREMENT — STRICT:
+Every mockup must include a mobile header below the md breakpoint with:
+- The header logo constrained on mobile (for example max-h-12 and max-w-[220px], with w-auto and object-contain) so it never pushes the menu off-screen at 375px.
+- A hamburger icon button with three horizontal lines. Do NOT use a text-only "Menu" pill as the mobile nav control.
+- Desktop nav hidden on mobile (hidden md:flex or equivalent) and the mobile hamburger hidden on md+.
+- A real collapsible mobile nav panel/dropdown controlled by minimal inline JavaScript in the standalone HTML. The hamburger must toggle the nav open/closed; do not ship a nonfunctional decorative button.
+- Header content must fit at 375px without clipping, overlap, or horizontal scrolling.
+
+MOBILE FIT REQUIREMENT — STRICT:
+At 375px width, no text, logo, cards, buttons, images, pills, badges, or decorative elements may overflow horizontally. Avoid oversized badges and long single-line labels on mobile. Use wrapping, smaller text, max-width constraints, overflow-hidden where appropriate, and stacked layouts. Buttons should fit their containers with readable labels; long CTA rows must stack vertically on mobile.
 
 INSPIRATION AUDIT — INTERNAL REASONING ONLY:
 Before designing, internally analyze each inspiration source — URL${screenshotCount > 0 ? " or screenshot" : ""} — across these dimensions. Do NOT write the audit in your response; keep it as silent reasoning that informs the HTML you generate.
-${hasUrls ? "For each URL, use the web_fetch tool to read it (one fetch per URL) and reason from text/HTML/CSS. " : ""}${screenshotCount > 0 ? "For each screenshot above, perceive the rendered visuals directly — the screenshots are your strongest signal. " : ""}Dimensions to consider:
+${hasUrls ? `For each URL, use the ${sourceToolName} tool to inspect it and reason from text/HTML/CSS. ` : ""}${screenshotCount > 0 ? "For each screenshot above, perceive the rendered visuals directly — the screenshots are your strongest signal. " : ""}Dimensions to consider:
 - **Color palette**: specific hex codes${screenshotCount > 0 ? " (estimate from the screenshots; for URLs, extract from CSS or inline styles)" : " (extract from CSS, inline styles, computed values, or background colors)"}. Distinguish primary, accent, surface, and foreground.
 - **Typography**: heading font family + fallback stack, body font family, weights, type-scale character.
 - **Photography / imagery style**: ${screenshotCount > 0 ? "from screenshots: moody/clinical, warm/lifestyle, editorial, etc., plus dominant subjects. From URLs: infer from <img>, alt, filenames." : "from <img> tags, alt text, src filenames, and copy — infer the imagery vibe and dominant subjects."}
@@ -108,7 +177,7 @@ ${hasUrls ? "For each URL, use the web_fetch tool to read it (one fetch per URL)
 
 Each of the 3 mockups MUST visibly reflect signals from this internal audit — palette echoes, typography feel, photography mood, distinctive layout moves. Do NOT produce a generic "tasteful agency" design. If the inspiration is dark and dramatic, at least one mockup must lean dark and dramatic. The 3 should be three distinct interpretations OF the inspirations, not generic alternatives ignoring them.
 
-${screenshotCount > 0 ? "NOTE: The screenshots are your richest input — you can actually see them. Treat them as the primary visual reference. URLs supplement with text/copy/structure." : "NOTE: web_fetch returns text/HTML, not pixels. Read filenames, alt text, CSS background-image URLs, and declared color/typography to ground the audit."}
+${screenshotCount > 0 ? "NOTE: The screenshots are your richest input — you can actually see them. Treat them as the primary visual reference. URLs supplement with text/copy/structure." : `NOTE: ${sourceToolName} returns text/HTML/search context, not pixels. Read filenames, alt text, CSS background-image URLs, and declared color/typography to ground the audit.`}
 
 SIZE BUDGET — IMPORTANT:
 Each mockup HTML must be focused and lean — aim for under **10,000 characters** per mockup. Use Tailwind utility classes efficiently. Do NOT duplicate sections, do NOT include placeholder lorem-style filler, do NOT inline long SVGs when a small set of components will do.
@@ -242,6 +311,146 @@ function parseMarkdownMockups(text: string): Mockup[] | null {
   });
 }
 
+function extractOpenAIText(value: unknown): string {
+  if (typeof value !== "object" || value === null) {
+    throw new Error("OpenAI response was not an object");
+  }
+  const response = value as {
+    output_text?: unknown;
+    output?: unknown;
+    error?: unknown;
+  };
+
+  if (typeof response.output_text === "string" && response.output_text.trim()) {
+    return response.output_text.trim();
+  }
+
+  const parts: string[] = [];
+  if (Array.isArray(response.output)) {
+    for (const item of response.output) {
+      if (typeof item !== "object" || item === null) continue;
+      const content = (item as { content?: unknown }).content;
+      if (!Array.isArray(content)) continue;
+      for (const block of content) {
+        if (typeof block !== "object" || block === null) continue;
+        const b = block as { type?: unknown; text?: unknown };
+        if (b.type === "output_text" && typeof b.text === "string") {
+          parts.push(b.text);
+        }
+      }
+    }
+  }
+
+  const text = parts.join("\n").trim();
+  if (!text) throw new Error("OpenAI returned no text content");
+  return text;
+}
+
+function parseMockupsFromText(text: string): {
+  mockups: Mockup[];
+  parseSource: "markdown" | "json";
+} {
+  let rawMockups: Mockup[] | null = parseMarkdownMockups(text);
+  let parseSource: "markdown" | "json" = "markdown";
+  if (!rawMockups) {
+    try {
+      const parsed = extractJson(text);
+      if (isValidMockups(parsed)) {
+        rawMockups = parsed.mockups;
+        parseSource = "json";
+      }
+    } catch {
+      // fall through to the error below
+    }
+  }
+  if (!rawMockups) {
+    throw new Error("Model response did not match the expected mockups shape");
+  }
+  return { mockups: rawMockups, parseSource };
+}
+
+function injectUploadedAssets(
+  rawMockups: Mockup[],
+  logoDataUrl: string,
+  heroPhotoStr: string | null,
+) {
+  return rawMockups.map((m) => {
+    let html = m.html.split(LOGO_PLACEHOLDER).join(logoDataUrl);
+    if (heroPhotoStr) {
+      html = html.split(HERO_IMAGE_PLACEHOLDER).join(heroPhotoStr);
+    }
+    return { name: m.name, html };
+  });
+}
+
+function getPlaceholderCounts(rawMockups: Mockup[]) {
+  return {
+    logo: rawMockups.map(
+      (m) => m.html.split(LOGO_PLACEHOLDER).length - 1,
+    ),
+    hero: rawMockups.map(
+      (m) => m.html.split(HERO_IMAGE_PLACEHOLDER).length - 1,
+    ),
+  };
+}
+
+async function generateWithOpenAI(args: {
+  apiKey: string;
+  prompt: string;
+  parsedScreenshots: ParsedScreenshot[];
+  startedAt: number;
+}) {
+  const { apiKey, prompt, parsedScreenshots, startedAt } = args;
+  const model = process.env.OPENAI_MOCKUP_MODEL || DEFAULT_OPENAI_MODEL;
+
+  const content = [
+    ...parsedScreenshots.map((s) => ({
+      type: "input_image",
+      image_url: `data:${s.mediaType};base64,${s.base64}`,
+      detail: "high",
+    })),
+    { type: "input_text", text: prompt },
+  ];
+
+  console.log(
+    `[generate] calling OpenAI (model=${model}, reasoning=medium, max_output_tokens=48000, web_search max_tool_calls=8)…`,
+  );
+  const res = await fetch("https://api.openai.com/v1/responses", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model,
+      input: [{ role: "user", content }],
+      max_output_tokens: 48000,
+      reasoning: { effort: "medium" },
+      tools: [{ type: "web_search", search_context_size: "medium" }],
+      max_tool_calls: 8,
+      store: false,
+    }),
+  });
+
+  const json = (await res.json().catch(() => null)) as unknown;
+  if (!res.ok) {
+    const message =
+      typeof json === "object" &&
+      json !== null &&
+      typeof (json as { error?: { message?: unknown } }).error?.message ===
+        "string"
+        ? (json as { error: { message: string } }).error.message
+        : `OpenAI API error (${res.status})`;
+    throw new Error(message);
+  }
+
+  console.log("[generate] OpenAI responded", {
+    elapsedSec: ((Date.now() - startedAt) / 1000).toFixed(1),
+  });
+
+  return extractOpenAIText(json);
+}
+
 export async function POST(req: Request) {
   let body: RequestBody;
   try {
@@ -250,7 +459,18 @@ export async function POST(req: Request) {
     return badRequest("Request body must be JSON");
   }
 
-  const { urls, currentSite, logoDataUrl, brandColor, clientName, screenshots } = body;
+  const {
+    urls,
+    currentSite,
+    logoDataUrl,
+    brandColor,
+    clientName,
+    screenshots,
+    heroPhotoDataUrl,
+    heroDirection,
+    logoBackground,
+    generationProvider,
+  } = body;
 
   if (
     !Array.isArray(urls) ||
@@ -279,7 +499,34 @@ export async function POST(req: Request) {
   }
   const currentSiteStr = typeof currentSite === "string" ? currentSite : "";
 
-  const parsedScreenshots: { mediaType: AllowedImageMediaType; base64: string }[] = [];
+  let heroPhotoStr: string | null = null;
+  if (
+    heroPhotoDataUrl !== undefined &&
+    heroPhotoDataUrl !== null &&
+    heroPhotoDataUrl !== ""
+  ) {
+    if (
+      typeof heroPhotoDataUrl !== "string" ||
+      !heroPhotoDataUrl.startsWith("data:image/")
+    ) {
+      return badRequest("Hero photo must be an image data URL");
+    }
+    if (heroPhotoDataUrl.length > MAX_HERO_PHOTO_BASE64_BYTES) {
+      return badRequest("Hero photo is over 5MB");
+    }
+    heroPhotoStr = heroPhotoDataUrl;
+  }
+
+  const heroDirectionStr =
+    typeof heroDirection === "string" ? heroDirection.trim() : "";
+  const logoBgStr: LogoBackground =
+    logoBackground === "light" || logoBackground === "dark"
+      ? logoBackground
+      : "either";
+  const provider: GenerationProvider =
+    generationProvider === "openai" ? "openai" : "anthropic";
+
+  const parsedScreenshots: ParsedScreenshot[] = [];
   if (screenshots !== undefined) {
     if (!Array.isArray(screenshots) || !screenshots.every((s) => typeof s === "string")) {
       return badRequest("Screenshots must be an array of image data URL strings");
@@ -299,10 +546,18 @@ export async function POST(req: Request) {
     }
   }
 
-  const apiKey = process.env.ANTHROPIC_API_KEY;
+  const apiKey =
+    provider === "openai"
+      ? process.env.OPENAI_API_KEY
+      : process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
     return NextResponse.json(
-      { error: "Server is missing ANTHROPIC_API_KEY" },
+      {
+        error:
+          provider === "openai"
+            ? "Server is missing OPENAI_API_KEY"
+            : "Server is missing ANTHROPIC_API_KEY",
+      },
       { status: 500 },
     );
   }
@@ -313,17 +568,25 @@ export async function POST(req: Request) {
     brandColor: colorStr,
     clientName: clientName.trim(),
     screenshotCount: parsedScreenshots.length,
+    hasHeroPhoto: heroPhotoStr !== null,
+    heroDirection: heroDirectionStr,
+    logoBackground: logoBgStr,
+    generationProvider: provider,
   });
 
-  const client = new Anthropic({ apiKey });
+  const client = provider === "anthropic" ? new Anthropic({ apiKey }) : null;
 
   const startedAt = Date.now();
   console.log("[generate] request received", {
+    provider,
     clientName: clientName.trim(),
     inspirationUrls: cleanedUrls.length,
     screenshotCount: parsedScreenshots.length,
     currentSite: currentSiteStr.trim() || null,
     logoBytes: logoDataUrl.length,
+    heroPhotoBytes: heroPhotoStr?.length ?? 0,
+    heroDirectionChars: heroDirectionStr.length,
+    logoBackground: logoBgStr,
     promptChars: prompt.length,
   });
 
@@ -339,112 +602,104 @@ export async function POST(req: Request) {
   ];
 
   try {
-    console.log("[generate] streaming Claude (model=claude-sonnet-4-5, max_tokens=48000, web_fetch max_uses=8, max_content_tokens=12000)…");
-    const stream = client.beta.messages.stream({
-      model: "claude-sonnet-4-5",
-      max_tokens: 48000,
-      betas: ["web-fetch-2025-09-10"],
-      tools: [
-        {
-          type: "web_fetch_20250910",
-          name: "web_fetch",
-          max_uses: 8,
-          max_content_tokens: 12000,
-        },
-      ],
-      messages: [{ role: "user", content: userContent }],
-    });
+    let text: string;
+    if (provider === "openai") {
+      text = await generateWithOpenAI({
+        apiKey,
+        prompt,
+        parsedScreenshots,
+        startedAt,
+      });
+    } else {
+      if (!client) throw new Error("Anthropic client was not initialized");
+      console.log(`[generate] streaming Claude (model=${DEFAULT_ANTHROPIC_MODEL}, max_tokens=48000, web_fetch max_uses=8, max_content_tokens=12000)…`);
+      const stream = client.beta.messages.stream({
+        model: DEFAULT_ANTHROPIC_MODEL,
+        max_tokens: 48000,
+        betas: ["web-fetch-2025-09-10"],
+        tools: [
+          {
+            type: "web_fetch_20250910",
+            name: "web_fetch",
+            max_uses: 8,
+            max_content_tokens: 12000,
+          },
+        ],
+        messages: [{ role: "user", content: userContent }],
+      });
 
-    stream.on("connect", () => {
-      console.log(`[generate] connected (+${((Date.now() - startedAt) / 1000).toFixed(1)}s)`);
-    });
+      stream.on("connect", () => {
+        console.log(`[generate] connected (+${((Date.now() - startedAt) / 1000).toFixed(1)}s)`);
+      });
 
-    let textChars = 0;
-    stream.on("streamEvent", (event) => {
-      const t = ((Date.now() - startedAt) / 1000).toFixed(1);
-      if (event.type === "message_start") {
-        console.log(`[generate] +${t}s message_start (model=${event.message.model})`);
-      } else if (event.type === "content_block_start") {
-        const b = event.content_block as { type: string; name?: string; input?: unknown };
-        const label = b.name ? `${b.type}:${b.name}` : b.type;
-        const inputPreview =
-          b.input && typeof b.input === "object"
-            ? ` ${JSON.stringify(b.input).slice(0, 200)}`
-            : "";
-        console.log(`[generate] +${t}s block_start [${event.index}] ${label}${inputPreview}`);
-      } else if (event.type === "content_block_stop") {
-        console.log(`[generate] +${t}s block_stop  [${event.index}]`);
-      } else if (event.type === "message_delta") {
-        console.log(`[generate] +${t}s message_delta stop_reason=${event.delta.stop_reason}`);
-      }
-    });
-
-    stream.on("text", (delta) => {
-      const before = textChars;
-      textChars += delta.length;
-      // Log every 5,000 text chars so we see writing progress without flooding
-      if (Math.floor(before / 5000) !== Math.floor(textChars / 5000)) {
+      let textChars = 0;
+      stream.on("streamEvent", (event) => {
         const t = ((Date.now() - startedAt) / 1000).toFixed(1);
-        console.log(`[generate] +${t}s writing… ${textChars} chars so far`);
+        if (event.type === "message_start") {
+          console.log(`[generate] +${t}s message_start (model=${event.message.model})`);
+        } else if (event.type === "content_block_start") {
+          const b = event.content_block as { type: string; name?: string; input?: unknown };
+          const label = b.name ? `${b.type}:${b.name}` : b.type;
+          const inputPreview =
+            b.input && typeof b.input === "object"
+              ? ` ${JSON.stringify(b.input).slice(0, 200)}`
+              : "";
+          console.log(`[generate] +${t}s block_start [${event.index}] ${label}${inputPreview}`);
+        } else if (event.type === "content_block_stop") {
+          console.log(`[generate] +${t}s block_stop  [${event.index}]`);
+        } else if (event.type === "message_delta") {
+          console.log(`[generate] +${t}s message_delta stop_reason=${event.delta.stop_reason}`);
+        }
+      });
+
+      stream.on("text", (delta) => {
+        const before = textChars;
+        textChars += delta.length;
+        // Log every 5,000 text chars so we see writing progress without flooding
+        if (Math.floor(before / 5000) !== Math.floor(textChars / 5000)) {
+          const t = ((Date.now() - startedAt) / 1000).toFixed(1);
+          console.log(`[generate] +${t}s writing… ${textChars} chars so far`);
+        }
+      });
+
+      const response = await stream.finalMessage();
+
+      const elapsedMs = Date.now() - startedAt;
+      const blockCounts = response.content.reduce<Record<string, number>>((acc, b) => {
+        acc[b.type] = (acc[b.type] ?? 0) + 1;
+        return acc;
+      }, {});
+      console.log("[generate] Claude responded", {
+        elapsedSec: (elapsedMs / 1000).toFixed(1),
+        stop_reason: response.stop_reason,
+        usage: response.usage,
+        contentBlocks: blockCounts,
+      });
+
+      text = response.content
+        .filter((block): block is Anthropic.Beta.BetaTextBlock => block.type === "text")
+        .map((block) => block.text)
+        .join("\n")
+        .trim();
+
+      if (!text) {
+        throw new Error("Model returned no text content");
       }
-    });
-
-    const response = await stream.finalMessage();
-
-    const elapsedMs = Date.now() - startedAt;
-    const blockCounts = response.content.reduce<Record<string, number>>((acc, b) => {
-      acc[b.type] = (acc[b.type] ?? 0) + 1;
-      return acc;
-    }, {});
-    console.log("[generate] Claude responded", {
-      elapsedSec: (elapsedMs / 1000).toFixed(1),
-      stop_reason: response.stop_reason,
-      usage: response.usage,
-      contentBlocks: blockCounts,
-    });
-
-    const text = response.content
-      .filter((block): block is Anthropic.Beta.BetaTextBlock => block.type === "text")
-      .map((block) => block.text)
-      .join("\n")
-      .trim();
-
-    if (!text) {
-      throw new Error("Model returned no text content");
     }
 
     // Primary path: Markdown-fenced output (current prompt format).
     // Fallback: legacy JSON output (in case the model reverts to it).
-    let rawMockups: Mockup[] | null = parseMarkdownMockups(text);
-    let parseSource: "markdown" | "json" = "markdown";
-    if (!rawMockups) {
-      try {
-        const parsed = extractJson(text);
-        if (isValidMockups(parsed)) {
-          rawMockups = parsed.mockups;
-          parseSource = "json";
-        }
-      } catch {
-        // fall through to the error below
-      }
-    }
-    if (!rawMockups) {
-      throw new Error("Model response did not match the expected mockups shape");
-    }
-
-    const mockups = rawMockups.map((m) => ({
-      name: m.name,
-      html: m.html.split(LOGO_PLACEHOLDER).join(logoDataUrl),
-    }));
-    const placeholderHits = rawMockups.map(
-      (m) => m.html.split(LOGO_PLACEHOLDER).length - 1,
-    );
+    const { mockups: rawMockups, parseSource } = parseMockupsFromText(text);
+    const mockups = injectUploadedAssets(rawMockups, logoDataUrl, heroPhotoStr);
+    const placeholderHits = getPlaceholderCounts(rawMockups);
 
     const totalHtmlChars = mockups.reduce((n, m) => n + m.html.length, 0);
     console.log("[generate] success", {
+      provider,
       mockups: mockups.length,
       parseSource,
-      placeholderReplacementsPerMockup: placeholderHits,
+      placeholderReplacementsPerMockup: placeholderHits.logo,
+      heroPlaceholderReplacementsPerMockup: placeholderHits.hero,
       screenshotCount: parsedScreenshots.length,
       totalHtmlChars,
       elapsedSec: ((Date.now() - startedAt) / 1000).toFixed(1),
