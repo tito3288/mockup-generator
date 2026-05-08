@@ -26,6 +26,7 @@ type PersistedState = {
   heroDirection: string;
   logoBackground: LogoBackground;
   generationProvider: GenerationProvider;
+  projectBrief: string;
   mockups: Mockup[];
 };
 
@@ -53,7 +54,8 @@ export default function Home() {
   const [logoBackground, setLogoBackground] =
     useState<LogoBackground>("either");
   const [generationProvider, setGenerationProvider] =
-    useState<GenerationProvider>("anthropic");
+    useState<GenerationProvider>("openai");
+  const [projectBrief, setProjectBrief] = useState("");
 
   useEffect(() => {
     try {
@@ -119,6 +121,8 @@ export default function Home() {
       ) {
         setGenerationProvider(data.generationProvider);
       }
+      if (typeof data.projectBrief === "string")
+        setProjectBrief(data.projectBrief);
     } catch {
       // corrupted state — ignore
     }
@@ -274,6 +278,7 @@ export default function Home() {
           heroDirection,
           logoBackground,
           generationProvider,
+          projectBrief,
         }),
       });
 
@@ -297,6 +302,7 @@ export default function Home() {
           heroDirection,
           logoBackground,
           generationProvider,
+          projectBrief,
           mockups: fresh,
         };
         sessionStorage.setItem(STORAGE_KEY, JSON.stringify(persisted));
@@ -416,22 +422,22 @@ export default function Home() {
                 Generation engine
               </legend>
               <p className="mt-1 text-xs text-slate-500">
-                Anthropic remains the default. OpenAI uses GPT-5.5 with web
-                search for a second high-quality generation path.
+                OpenAI GPT-5.5 is the default. Anthropic Claude is available as
+                an alternate generation path.
               </p>
               <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
                 {(
                   [
                     {
-                      id: "anthropic",
-                      title: "Anthropic Claude",
-                      description: "Default current flow with Claude Sonnet 4.5",
-                    },
-                    {
                       id: "openai",
                       title: "OpenAI GPT-5.5",
                       description:
-                        "Alternate flow using Responses API + web search",
+                        "Default flow using Responses API with web search",
+                    },
+                    {
+                      id: "anthropic",
+                      title: "Anthropic Claude",
+                      description: "Alternate flow with Claude Sonnet 4.6",
                     },
                   ] as const
                 ).map((opt) => (
@@ -487,6 +493,26 @@ export default function Home() {
                 If provided, the selected engine will inspect this site first to
                 use the client&rsquo;s real copy, voice, and palette as canonical
                 brand truth.
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-semibold text-slate-800 mb-2">
+                Project brief (optional)
+              </label>
+              <textarea
+                rows={3}
+                placeholder="E-commerce site — needs product cards with prices and Buy Now buttons, plus a shop section. Or: booking-driven (calendar/appointment CTA). Or: portfolio (gallery grid)."
+                value={projectBrief}
+                onChange={(e) => setProjectBrief(e.target.value)}
+                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-slate-400 focus:ring-4 focus:ring-slate-900/10"
+              />
+              <p className="mt-1 text-xs text-slate-500">
+                What kind of site is this and what functional features must it
+                include? Use this when the site needs more than the standard
+                services-page template — e-commerce, booking, gallery, menu,
+                etc. Applies to all three concepts and works the same for both
+                engines.
               </p>
             </div>
 
@@ -623,6 +649,38 @@ export default function Home() {
             </div>
 
             <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+              <div>
+                <label className="mb-2 block text-sm font-semibold text-slate-800">
+                  Client name
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="Acme Coffee Roasters"
+                  value={clientName}
+                  onChange={(e) => setClientName(e.target.value)}
+                  className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-slate-400 focus:ring-4 focus:ring-slate-900/10"
+                />
+              </div>
+
+              <div>
+                <label className="mb-2 block text-sm font-semibold text-slate-800">
+                  Brand colors (optional)
+                </label>
+                <input
+                  type="text"
+                  placeholder="#FF6600, #003366, #FFFFFF"
+                  pattern="^\s*#?[0-9A-Fa-f]{6}(\s*,\s*#?[0-9A-Fa-f]{6})*\s*$"
+                  value={brandColor}
+                  onChange={(e) => setBrandColor(e.target.value)}
+                  className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-slate-400 focus:ring-4 focus:ring-slate-900/10"
+                />
+                <p className="mt-1 text-xs text-slate-500">
+                  One hex, or several comma-separated. Listed first = treated as
+                  primary.
+                </p>
+              </div>
+
               <div className="md:col-span-1">
                 <label className="mb-2 block text-sm font-semibold text-slate-800">
                   Logo
@@ -665,38 +723,6 @@ export default function Home() {
                     ))}
                   </div>
                 </fieldset>
-              </div>
-
-              <div>
-                <label className="mb-2 block text-sm font-semibold text-slate-800">
-                  Brand colors (optional)
-                </label>
-                <input
-                  type="text"
-                  placeholder="#FF6600, #003366, #FFFFFF"
-                  pattern="^\s*#?[0-9A-Fa-f]{6}(\s*,\s*#?[0-9A-Fa-f]{6})*\s*$"
-                  value={brandColor}
-                  onChange={(e) => setBrandColor(e.target.value)}
-                  className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-slate-400 focus:ring-4 focus:ring-slate-900/10"
-                />
-                <p className="mt-1 text-xs text-slate-500">
-                  One hex, or several comma-separated. Listed first = treated as
-                  primary.
-                </p>
-              </div>
-
-              <div>
-                <label className="mb-2 block text-sm font-semibold text-slate-800">
-                  Client name
-                </label>
-                <input
-                  type="text"
-                  required
-                  placeholder="Acme Coffee Roasters"
-                  value={clientName}
-                  onChange={(e) => setClientName(e.target.value)}
-                  className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-slate-400 focus:ring-4 focus:ring-slate-900/10"
-                />
               </div>
             </div>
 

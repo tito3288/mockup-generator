@@ -22,6 +22,7 @@ type RequestBody = {
   heroDirection?: unknown;
   logoBackground?: unknown;
   generationProvider?: unknown;
+  projectBrief?: unknown;
 };
 
 type LogoBackground = "light" | "dark" | "either";
@@ -61,6 +62,7 @@ function buildPrompt(args: {
   heroDirection: string;
   logoBackground: LogoBackground;
   generationProvider: GenerationProvider;
+  projectBrief: string;
 }) {
   const {
     urls,
@@ -72,6 +74,7 @@ function buildPrompt(args: {
     heroDirection,
     logoBackground,
     generationProvider,
+    projectBrief,
   } = args;
   const sourceToolName =
     generationProvider === "openai" ? "web_search" : "web_fetch";
@@ -104,6 +107,15 @@ Before designing, ${sourceToolAction}. Extract:
 - Real testimonials, taglines, or social proof if present
 
 Treat anything from the current site as canonical. Use the inspiration URLs only for visual layout/aesthetic direction, never for copy or brand voice.
+
+`
+    : "";
+
+  const projectBriefBlock = projectBrief
+    ? `PROJECT BRIEF — IMPORTANT (functional requirements for this site):
+${projectBrief}
+
+Treat this brief as a hard functional requirement that ALL 3 mockups must satisfy. The brief may modify the standard section list — for example, if it describes e-commerce, replace the generic "services" section with a shop section featuring product cards (image, name, price, and a clear Buy Now or Add to Cart button). If it describes booking, include a booking/appointment CTA prominently. If it describes a portfolio or gallery, include the gallery treatment as a primary section. Adapt section names, section content, and CTAs to fit the brief. The 3 concepts may interpret the brief differently in visual treatment, but every mockup must visibly include the features the brief describes.
 
 `
     : "";
@@ -145,7 +157,7 @@ Wherever you want the client's logo to appear (typically in the header), use the
 Make the header logo visually prominent — roughly 56–72px tall on desktop (Tailwind h-14 to h-18, or larger if the design calls for it). Avoid sizes smaller than h-12 in the header; a tiny logo reads as unfinished. Always pair height with \`w-auto\` so the aspect ratio is preserved. Footer or inline mentions can be smaller.
 Do NOT generate a base64 or data URL yourself. The server will substitute the real logo into every occurrence of \`${LOGO_PLACEHOLDER}\` after you finish.
 
-${heroPhotoBlock}${heroDirectionBlock}${logoBgBlock}For each of the 3 mockups:
+${projectBriefBlock}${heroPhotoBlock}${heroDirectionBlock}${logoBgBlock}For each of the 3 mockups:
 - Make it a complete standalone HTML file
 - Include the mobile viewport tag in <head>: <meta name="viewport" content="width=device-width, initial-scale=1">
 - Use Tailwind CSS via CDN
@@ -519,12 +531,14 @@ export async function POST(req: Request) {
 
   const heroDirectionStr =
     typeof heroDirection === "string" ? heroDirection.trim() : "";
+  const projectBriefStr =
+    typeof body.projectBrief === "string" ? body.projectBrief.trim() : "";
   const logoBgStr: LogoBackground =
     logoBackground === "light" || logoBackground === "dark"
       ? logoBackground
       : "either";
   const provider: GenerationProvider =
-    generationProvider === "openai" ? "openai" : "anthropic";
+    generationProvider === "anthropic" ? "anthropic" : "openai";
 
   const parsedScreenshots: ParsedScreenshot[] = [];
   if (screenshots !== undefined) {
@@ -572,6 +586,7 @@ export async function POST(req: Request) {
     heroDirection: heroDirectionStr,
     logoBackground: logoBgStr,
     generationProvider: provider,
+    projectBrief: projectBriefStr,
   });
 
   const client = provider === "anthropic" ? new Anthropic({ apiKey }) : null;
@@ -587,6 +602,7 @@ export async function POST(req: Request) {
     heroPhotoBytes: heroPhotoStr?.length ?? 0,
     heroDirectionChars: heroDirectionStr.length,
     logoBackground: logoBgStr,
+    projectBriefChars: projectBriefStr.length,
     promptChars: prompt.length,
   });
 
