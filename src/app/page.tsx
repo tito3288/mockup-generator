@@ -7,6 +7,7 @@ type Mockup = { name: string; html: string };
 type Screenshot = { name: string; dataUrl: string };
 type LogoBackground = "light" | "dark" | "either";
 type GenerationProvider = "anthropic" | "openai";
+type ShareLink = { url: string; expiresAt: number };
 
 const STORAGE_KEY = "mockup-generator:state";
 const MAX_SCREENSHOTS = 3;
@@ -28,6 +29,7 @@ type PersistedState = {
   generationProvider: GenerationProvider;
   projectBrief: string;
   mockups: Mockup[];
+  shareLinks: Record<number, ShareLink>;
 };
 
 export default function Home() {
@@ -56,6 +58,11 @@ export default function Home() {
   const [generationProvider, setGenerationProvider] =
     useState<GenerationProvider>("openai");
   const [projectBrief, setProjectBrief] = useState("");
+  const [shareLinks, setShareLinks] = useState<Record<number, ShareLink>>({});
+  const [sharingIndex, setSharingIndex] = useState<number | null>(null);
+  const [shareError, setShareError] = useState<string | null>(null);
+  const [shareModalIndex, setShareModalIndex] = useState<number | null>(null);
+  const [shareLinkCopied, setShareLinkCopied] = useState(false);
 
   useEffect(() => {
     try {
@@ -123,6 +130,23 @@ export default function Home() {
       }
       if (typeof data.projectBrief === "string")
         setProjectBrief(data.projectBrief);
+      if (data.shareLinks && typeof data.shareLinks === "object") {
+        const now = Date.now();
+        const cleaned: Record<number, ShareLink> = {};
+        for (const [k, v] of Object.entries(
+          data.shareLinks as Record<string, ShareLink>,
+        )) {
+          if (
+            v &&
+            typeof v.url === "string" &&
+            typeof v.expiresAt === "number" &&
+            v.expiresAt > now
+          ) {
+            cleaned[Number(k)] = v;
+          }
+        }
+        setShareLinks(cleaned);
+      }
     } catch {
       // corrupted state — ignore
     }
@@ -262,6 +286,9 @@ export default function Home() {
 
     setIsLoading(true);
     setMockups([]);
+    setShareLinks({});
+    setShareModalIndex(null);
+    setShareError(null);
 
     try {
       const res = await fetch("/api/generate", {
@@ -304,6 +331,7 @@ export default function Home() {
           generationProvider,
           projectBrief,
           mockups: fresh,
+          shareLinks: {},
         };
         sessionStorage.setItem(STORAGE_KEY, JSON.stringify(persisted));
       } catch (storageErr) {
@@ -369,6 +397,77 @@ export default function Home() {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+  }
+
+  async function handleCreateShareLink(index: number, mockup: Mockup) {
+    setShareError(null);
+    setShareLinkCopied(false);
+
+    const cached = shareLinks[index];
+    if (cached && cached.expiresAt > Date.now()) {
+      setShareModalIndex(index);
+      return;
+    }
+
+    setSharingIndex(index);
+    try {
+      const res = await fetch("/api/share", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ html: mockup.html }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data?.error ?? "Could not create share link");
+      }
+      const next: Record<number, ShareLink> = {
+        ...shareLinks,
+        [index]: { url: data.url as string, expiresAt: data.expiresAt as number },
+      };
+      setShareLinks(next);
+      setShareModalIndex(index);
+      try {
+        const raw = sessionStorage.getItem(STORAGE_KEY);
+        const existing = raw ? JSON.parse(raw) : {};
+        sessionStorage.setItem(
+          STORAGE_KEY,
+          JSON.stringify({ ...existing, shareLinks: next }),
+        );
+      } catch {
+        // best effort
+      }
+    } catch (err) {
+      setShareError(
+        err instanceof Error ? err.message : "Could not create share link",
+      );
+    } finally {
+      setSharingIndex(null);
+    }
+  }
+
+  async function copyShareLink(url: string) {
+    try {
+      await navigator.clipboard.writeText(url);
+      setShareLinkCopied(true);
+      window.setTimeout(() => setShareLinkCopied(false), 2000);
+    } catch {
+      setShareError("Could not copy. Select the link and copy manually.");
+    }
+  }
+
+  function closeShareModal() {
+    setShareModalIndex(null);
+    setShareLinkCopied(false);
+  }
+
+  function formatExpiry(ms: number) {
+    return new Date(ms).toLocaleString(undefined, {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    });
   }
 
   return (
@@ -783,6 +882,11 @@ export default function Home() {
                 {exportError}
               </div>
             )}
+            {shareError && shareModalIndex === null && (
+              <div className="mb-5 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+                {shareError}
+              </div>
+            )}
             <div className="mb-5 flex flex-wrap items-center gap-3">
               <span className="text-xs font-medium uppercase tracking-[0.2em] text-slate-400">
                 Preview
@@ -836,6 +940,20 @@ export default function Home() {
                       </button>
                       <button
                         type="button"
+                        onClick={() => handleCreateShareLink(i, m)}
+                        disabled={
+                          exportingIndex !== null || sharingIndex !== null
+                        }
+                        className="inline-flex items-center justify-center rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:-translate-y-0.5 hover:border-slate-300 hover:text-slate-950 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0"
+                      >
+                        {sharingIndex === i
+                          ? "Creating link…"
+                          : shareLinks[i]
+                            ? "Show share link"
+                            : "Share Link"}
+                      </button>
+                      <button
+                        type="button"
                         onClick={() => downloadMockup(m)}
                         disabled={exportingIndex !== null}
                         className="inline-flex items-center justify-center rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:-translate-y-0.5 hover:border-slate-300 hover:text-slate-950 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0"
@@ -868,6 +986,67 @@ export default function Home() {
           </section>
         )}
       </div>
+
+      {shareModalIndex !== null && shareLinks[shareModalIndex] && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 px-4 backdrop-blur-sm"
+          onClick={closeShareModal}
+        >
+          <div
+            className="w-full max-w-lg rounded-3xl border border-white/70 bg-white/95 p-6 shadow-xl shadow-slate-950/20 backdrop-blur"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-4 flex items-start justify-between gap-3">
+              <div>
+                <p className="text-xs font-medium uppercase tracking-[0.2em] text-slate-400">
+                  Concept {shareModalIndex + 1}
+                </p>
+                <h3 className="mt-1 text-lg font-semibold text-slate-950">
+                  Share this preview
+                </h3>
+                <p className="mt-1 text-sm text-slate-500">
+                  Anyone with this link can view the demo on a phone or
+                  computer. Link expires{" "}
+                  {formatExpiry(shareLinks[shareModalIndex].expiresAt)}.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={closeShareModal}
+                aria-label="Close"
+                className="inline-flex h-8 w-8 items-center justify-center rounded-full text-slate-500 hover:bg-slate-100 hover:text-slate-900"
+              >
+                ×
+              </button>
+            </div>
+            <div className="flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2">
+              <input
+                type="text"
+                readOnly
+                value={shareLinks[shareModalIndex].url}
+                onFocus={(e) => e.currentTarget.select()}
+                className="min-w-0 flex-1 bg-transparent text-sm text-slate-900 outline-none"
+              />
+              <button
+                type="button"
+                onClick={() =>
+                  copyShareLink(shareLinks[shareModalIndex!].url)
+                }
+                className="inline-flex shrink-0 items-center justify-center rounded-xl bg-slate-950 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-slate-800"
+              >
+                {shareLinkCopied ? "Copied!" : "Copy link"}
+              </button>
+            </div>
+            {shareError && (
+              <p className="mt-3 text-xs text-red-600">{shareError}</p>
+            )}
+            <p className="mt-4 text-xs text-slate-500">
+              Tip: paste it into an email or text message — the client taps it
+              on their phone and sees the demo full-screen.
+            </p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
