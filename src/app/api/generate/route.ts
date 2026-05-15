@@ -5,11 +5,54 @@ export const runtime = "nodejs";
 export const maxDuration = 300;
 
 type Mockup = { name: string; html: string };
-
-const LOGO_PLACEHOLDER = "__LOGO_DATA_URL__";
-const HERO_IMAGE_PLACEHOLDER = "__HERO_IMAGE_DATA_URL__";
-const DEFAULT_OPENAI_MODEL = "gpt-5.5";
-const DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-4-6";
+type LogoBackground = "light" | "dark" | "either";
+type GenerationProvider = "anthropic" | "openai";
+type QualityMode = "premium";
+type ClientImageRole = "hero" | "services" | "team" | "gallery" | "general";
+type AllowedImageMediaType = "image/png" | "image/jpeg" | "image/gif" | "image/webp";
+type ParsedImage = { mediaType: AllowedImageMediaType; base64: string; label?: string };
+type ClientImageAsset = {
+  id: string;
+  name: string;
+  role: ClientImageRole;
+  dataUrl: string;
+};
+type ResearchPage = {
+  url: string;
+  kind: "current" | "inspiration";
+  source: "firecrawl" | "provider-tools";
+  markdown: string;
+  screenshotDataUrl?: string;
+  links: string[];
+  images: string[];
+  branding: unknown;
+  error?: string;
+};
+type ResearchPacket = {
+  currentSite?: ResearchPage;
+  inspirations: ResearchPage[];
+  source: "firecrawl" | "provider-tools" | "mixed";
+};
+type CreativeDirection = {
+  name: string;
+  angle: string;
+  palette: string;
+  typography: string;
+  layout: string;
+  imagery: string;
+};
+type DesignAnalysis = {
+  brandProfile: string;
+  inspirationProfile: string;
+  directions: CreativeDirection[];
+};
+type MockupQAReport = {
+  name: string;
+  pass: boolean;
+  score: number;
+  issues: string[];
+  repairInstructions: string;
+};
 
 type RequestBody = {
   urls?: unknown;
@@ -23,24 +66,35 @@ type RequestBody = {
   logoBackground?: unknown;
   generationProvider?: unknown;
   projectBrief?: unknown;
+  clientImages?: unknown;
+  audience?: unknown;
+  goals?: unknown;
+  mustHaves?: unknown;
+  avoidList?: unknown;
+  compNotes?: unknown;
+  styleNotes?: unknown;
+  qualityMode?: unknown;
 };
 
-type LogoBackground = "light" | "dark" | "either";
-type GenerationProvider = "anthropic" | "openai";
-
-type AllowedImageMediaType = "image/png" | "image/jpeg" | "image/gif" | "image/webp";
-type ParsedScreenshot = { mediaType: AllowedImageMediaType; base64: string };
-
+const LOGO_PLACEHOLDER = "__LOGO_DATA_URL__";
+const HERO_IMAGE_PLACEHOLDER = "__HERO_IMAGE_DATA_URL__";
+const DEFAULT_OPENAI_MODEL = "gpt-5.5";
+const DEFAULT_ANTHROPIC_MODEL = "claude-opus-4-7";
+const DEFAULT_OPENAI_REASONING = "medium";
 const MAX_SCREENSHOTS = 3;
-const MAX_SCREENSHOT_BASE64_BYTES = 7 * 1024 * 1024;
-const MAX_HERO_PHOTO_BASE64_BYTES = 7 * 1024 * 1024;
+const MAX_CLIENT_IMAGES = 12;
+const MAX_SCREENSHOT_DATA_URL_BYTES = 7 * 1024 * 1024;
+const MAX_CLIENT_IMAGE_DATA_URL_BYTES = 2.2 * 1024 * 1024;
+const MAX_TOTAL_CLIENT_IMAGE_BYTES = 18 * 1024 * 1024;
+const MAX_RESEARCH_CHARS_PER_PAGE = 12000;
+const MAX_REPAIR_PASSES = 1;
 
-function parseScreenshotDataUrl(
-  dataUrl: string,
-): { mediaType: AllowedImageMediaType; base64: string } | null {
-  const match = dataUrl.match(
-    /^data:(image\/(png|jpeg|gif|webp));base64,(.+)$/,
-  );
+function badRequest(error: string) {
+  return NextResponse.json({ error }, { status: 400 });
+}
+
+function parseImageDataUrl(dataUrl: string): ParsedImage | null {
+  const match = dataUrl.match(/^data:(image\/(png|jpeg|gif|webp));base64,([\s\S]+)$/);
   if (!match) return null;
   return {
     mediaType: match[1] as AllowedImageMediaType,
@@ -48,177 +102,33 @@ function parseScreenshotDataUrl(
   };
 }
 
-function badRequest(error: string) {
-  return NextResponse.json({ error }, { status: 400 });
+function truncate(s: string, max = MAX_RESEARCH_CHARS_PER_PAGE) {
+  if (s.length <= max) return s;
+  return `${s.slice(0, max)}\n\n[truncated ${s.length - max} chars]`;
 }
 
-function buildPrompt(args: {
-  urls: string[];
-  currentSite: string;
-  brandColor: string;
-  clientName: string;
-  screenshotCount: number;
-  hasHeroPhoto: boolean;
-  heroDirection: string;
-  logoBackground: LogoBackground;
-  generationProvider: GenerationProvider;
-  projectBrief: string;
-}) {
-  const {
-    urls,
-    currentSite,
-    brandColor,
-    clientName,
-    screenshotCount,
-    hasHeroPhoto,
-    heroDirection,
-    logoBackground,
-    generationProvider,
-    projectBrief,
-  } = args;
-  const sourceToolName =
-    generationProvider === "openai" ? "web_search" : "web_fetch";
-  const sourceToolAction =
-    generationProvider === "openai"
-      ? "use the web_search tool to inspect this site FIRST"
-      : "use the web_fetch tool to read this site FIRST";
-  const colorLine = brandColor.trim() ? brandColor.trim() : "designer's choice";
-  const hasUrls = urls.length > 0;
-  const urlLabel = urls.length === 1 ? "Inspiration URL" : "Inspiration URLs";
-  const urlLine = hasUrls
-    ? `${urlLabel}: ${urls.join(", ")}`
-    : "Inspiration URLs: (none provided — rely on the screenshots)";
+function stripBase64ForPrompt(value: unknown): unknown {
+  if (typeof value === "string") {
+    if (value.startsWith("data:image/")) return "[image data omitted]";
+    return value.length > 6000 ? truncate(value, 6000) : value;
+  }
+  if (Array.isArray(value)) return value.slice(0, 20).map(stripBase64ForPrompt);
+  if (value && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value)) {
+      out[k] = stripBase64ForPrompt(v);
+    }
+    return out;
+  }
+  return value;
+}
 
-  const screenshotBlock =
-    screenshotCount > 0
-      ? `INSPIRATION SCREENSHOTS:
-You have been provided ${screenshotCount} reference screenshot${screenshotCount === 1 ? "" : "s"} above this text. These are NOT decorative — they are a primary visual reference for this project. Look at them carefully. Note color palette, typography style, photography mood, layout treatments, and overall vibe. The mockups must visibly echo what you see in these screenshots.
+function clientImagePlaceholder(id: string) {
+  return `__CLIENT_IMAGE_${id}__`;
+}
 
-`
-      : "";
-
-  const currentSiteBlock = currentSite.trim()
-    ? `CLIENT'S CURRENT WEBSITE (canonical brand truth): ${currentSite.trim()}
-
-Before designing, ${sourceToolAction}. Extract:
-- Real brand voice and tone of copy
-- Actual services/products they offer (use these — do NOT invent)
-- Existing color palette and typography choices
-- Real testimonials, taglines, or social proof if present
-
-Treat anything from the current site as canonical. Use the inspiration URLs only for visual layout/aesthetic direction, never for copy or brand voice.
-
-`
-    : "";
-
-  const projectBriefBlock = projectBrief
-    ? `PROJECT BRIEF — IMPORTANT (functional requirements for this site):
-${projectBrief}
-
-Treat this brief as a hard functional requirement that ALL 3 mockups must satisfy. The brief may modify the standard section list — for example, if it describes e-commerce, replace the generic "services" section with a shop section featuring product cards (image, name, price, and a clear Buy Now or Add to Cart button). If it describes booking, include a booking/appointment CTA prominently. If it describes a portfolio or gallery, include the gallery treatment as a primary section. Adapt section names, section content, and CTAs to fit the brief. The 3 concepts may interpret the brief differently in visual treatment, but every mockup must visibly include the features the brief describes.
-
-`
-    : "";
-
-  const heroPhotoBlock = hasHeroPhoto
-    ? `HERO IMAGE — IMPORTANT:
-The user has provided a real client photograph that MUST appear in the hero section of all 3 mockups. Use the literal placeholder string \`${HERO_IMAGE_PLACEHOLDER}\` as the src wherever the hero photo appears. Example:
-<img src="${HERO_IMAGE_PLACEHOLDER}" alt="${clientName}" class="..." />
-Treat this image as a fixed asset: do NOT swap it for stock photos, do NOT use background-image URLs, do NOT generate alternative imagery for the hero in any of the 3 concepts. The same photo appears in all three. The variation between concepts must come from layout, composition, framing, overlays, gradients, headline treatment — not from changing the photo. Do NOT generate base64 yourself; the server will substitute the real image into every \`${HERO_IMAGE_PLACEHOLDER}\` after you finish.
-
-`
-    : "";
-
-  const heroDirectionBlock = heroDirection
-    ? `HERO DIRECTION (user's compositional notes for the hero section):
-${heroDirection}
-
-Apply this direction to the hero of each concept. The three concepts may interpret it differently (e.g. one literal, one looser), but all must respect the user's intent.
-
-`
-    : "";
-
-  const logoBgBlock =
-    logoBackground === "either"
-      ? ""
-      : `LOGO BACKGROUND CONSTRAINT — IMPORTANT:
-The client's logo is designed for ${logoBackground === "dark" ? "DARK" : "LIGHT"} backgrounds (its marks are ${logoBackground === "dark" ? "light/white" : "dark"}). In ALL 3 mockups, the header containing the logo MUST use a ${logoBackground === "dark" ? "dark or strongly colored" : "light"} background, OR the logo must sit on a contrasting backing shape, so it remains clearly visible. Never place the logo on a ${logoBackground === "dark" ? "white or light" : "dark"} header where its marks would disappear. This constraint applies to all three concepts without exception.
-
-`;
-
-  return `You are a senior web designer. Analyze the provided inspiration sources and create 3 visually distinct homepage mockups for ${clientName}.
-
-${screenshotBlock}${currentSiteBlock}${urlLine}
-Brand colors: ${colorLine}
-
-LOGO IMAGE — IMPORTANT:
-Wherever you want the client's logo to appear (typically in the header), use the literal placeholder string \`${LOGO_PLACEHOLDER}\` as the src value. Example:
-<img src="${LOGO_PLACEHOLDER}" alt="${clientName} logo" class="h-14 w-auto md:h-16" />
-Make the header logo visually prominent — roughly 56–72px tall on desktop (Tailwind h-14 to h-18, or larger if the design calls for it). Avoid sizes smaller than h-12 in the header; a tiny logo reads as unfinished. Always pair height with \`w-auto\` so the aspect ratio is preserved. Footer or inline mentions can be smaller.
-Do NOT generate a base64 or data URL yourself. The server will substitute the real logo into every occurrence of \`${LOGO_PLACEHOLDER}\` after you finish.
-
-${projectBriefBlock}${heroPhotoBlock}${heroDirectionBlock}${logoBgBlock}For each of the 3 mockups:
-- Make it a complete standalone HTML file
-- Include the mobile viewport tag in <head>: <meta name="viewport" content="width=device-width, initial-scale=1">
-- Use Tailwind CSS via CDN
-- Include: header with logo, hero section, services or features section, testimonials or social proof, CTA section, footer
-- Each of the 3 must have a distinctly different layout, typography feel, and visual approach
-- Use real-looking placeholder content relevant to ${clientName}, not lorem ipsum
-- Make them production-quality, not wireframes
-- Fully responsive — design mobile-first, then layer up. Use Tailwind responsive prefixes (sm:, md:, lg:) on layout, typography, spacing, and any multi-column grids. The mockup must read cleanly at 375px (phone), 768px (tablet), and 1280px+ (desktop). No horizontal scroll on mobile. Stack columns on small screens. Hero typography should scale down for small screens (e.g. text-4xl sm:text-5xl lg:text-6xl).
-
-MOBILE HEADER REQUIREMENT — STRICT:
-Every mockup must include a mobile header below the md breakpoint with:
-- The header logo constrained on mobile (for example max-h-12 and max-w-[220px], with w-auto and object-contain) so it never pushes the menu off-screen at 375px.
-- A hamburger icon button with three horizontal lines. Do NOT use a text-only "Menu" pill as the mobile nav control.
-- Desktop nav hidden on mobile (hidden md:flex or equivalent) and the mobile hamburger hidden on md+.
-- A real collapsible mobile nav panel/dropdown controlled by minimal inline JavaScript in the standalone HTML. The hamburger must toggle the nav open/closed; do not ship a nonfunctional decorative button.
-- Header content must fit at 375px without clipping, overlap, or horizontal scrolling.
-
-MOBILE FIT REQUIREMENT — STRICT:
-At 375px width, no text, logo, cards, buttons, images, pills, badges, or decorative elements may overflow horizontally. Avoid oversized badges and long single-line labels on mobile. Use wrapping, smaller text, max-width constraints, overflow-hidden where appropriate, and stacked layouts. Buttons should fit their containers with readable labels; long CTA rows must stack vertically on mobile.
-
-INSPIRATION AUDIT — INTERNAL REASONING ONLY:
-Before designing, internally analyze each inspiration source — URL${screenshotCount > 0 ? " or screenshot" : ""} — across these dimensions. Do NOT write the audit in your response; keep it as silent reasoning that informs the HTML you generate.
-${hasUrls ? `For each URL, use the ${sourceToolName} tool to inspect it and reason from text/HTML/CSS. ` : ""}${screenshotCount > 0 ? "For each screenshot above, perceive the rendered visuals directly — the screenshots are your strongest signal. " : ""}Dimensions to consider:
-- **Color palette**: specific hex codes${screenshotCount > 0 ? " (estimate from the screenshots; for URLs, extract from CSS or inline styles)" : " (extract from CSS, inline styles, computed values, or background colors)"}. Distinguish primary, accent, surface, and foreground.
-- **Typography**: heading font family + fallback stack, body font family, weights, type-scale character.
-- **Photography / imagery style**: ${screenshotCount > 0 ? "from screenshots: moody/clinical, warm/lifestyle, editorial, etc., plus dominant subjects. From URLs: infer from <img>, alt, filenames." : "from <img> tags, alt text, src filenames, and copy — infer the imagery vibe and dominant subjects."}
-- **Layout DNA**: hero treatment, grid choices, density, distinctive visual moves.
-- **Overall aesthetic vibe**: 3-5 words (e.g. "moody clinical luxury").
-
-Each of the 3 mockups MUST visibly reflect signals from this internal audit — palette echoes, typography feel, photography mood, distinctive layout moves. Do NOT produce a generic "tasteful agency" design. If the inspiration is dark and dramatic, at least one mockup must lean dark and dramatic. The 3 should be three distinct interpretations OF the inspirations, not generic alternatives ignoring them.
-
-${screenshotCount > 0 ? "NOTE: The screenshots are your richest input — you can actually see them. Treat them as the primary visual reference. URLs supplement with text/copy/structure." : `NOTE: ${sourceToolName} returns text/HTML/search context, not pixels. Read filenames, alt text, CSS background-image URLs, and declared color/typography to ground the audit.`}
-
-SIZE BUDGET — IMPORTANT:
-Each mockup HTML must be focused and lean — aim for under **10,000 characters** per mockup. Use Tailwind utility classes efficiently. Do NOT duplicate sections, do NOT include placeholder lorem-style filler, do NOT inline long SVGs when a small set of components will do.
-
-OUTPUT FORMAT — STRICT:
-Return EXACTLY three Markdown code blocks, each preceded by a Design header. Use tilde fences (~~~) — NOT backticks — to avoid escaping issues. Use this exact structure:
-
-## Design A
-~~~html
-<!DOCTYPE html>
-... full HTML for Design A ...
-</html>
-~~~
-
-## Design B
-~~~html
-<!DOCTYPE html>
-... full HTML for Design B ...
-</html>
-~~~
-
-## Design C
-~~~html
-<!DOCTYPE html>
-... full HTML for Design C ...
-</html>
-~~~
-
-The very first line of your response must be \`## Design A\`. No prose before, between, or after the blocks. No audit notes. No JSON. No explanations. Just the three Design headers and their fenced HTML blocks. The HTML inside each fence is raw — do NOT escape any characters; write HTML exactly as it should appear in the file.`;
+function cleanString(value: unknown) {
+  return typeof value === "string" ? value.trim() : "";
 }
 
 function extractJson(text: string): unknown {
@@ -234,44 +144,6 @@ function extractJson(text: string): unknown {
     } catch {}
   }
 
-  // Find the JSON object that starts with { "mockups": ... and walk
-  // forward with brace balancing (respecting strings) to its matching }.
-  // This is robust to prose preceding or following the JSON.
-  const startMatch = trimmed.match(/\{\s*["']mockups["']/);
-  if (startMatch && typeof startMatch.index === "number") {
-    const start = startMatch.index;
-    let depth = 0;
-    let inString = false;
-    let escape = false;
-    for (let i = start; i < trimmed.length; i++) {
-      const c = trimmed[i];
-      if (escape) {
-        escape = false;
-        continue;
-      }
-      if (inString) {
-        if (c === "\\") escape = true;
-        else if (c === '"') inString = false;
-        continue;
-      }
-      if (c === '"') {
-        inString = true;
-        continue;
-      }
-      if (c === "{") depth++;
-      else if (c === "}") {
-        depth--;
-        if (depth === 0) {
-          try {
-            return JSON.parse(trimmed.slice(start, i + 1));
-          } catch {}
-          break;
-        }
-      }
-    }
-  }
-
-  // Last-resort fallback: outermost braces
   const first = trimmed.indexOf("{");
   const last = trimmed.lastIndexOf("}");
   if (first !== -1 && last > first) {
@@ -283,23 +155,6 @@ function extractJson(text: string): unknown {
   throw new Error("Model response was not valid JSON");
 }
 
-function isValidMockups(value: unknown): value is { mockups: Mockup[] } {
-  if (typeof value !== "object" || value === null) return false;
-  const mockups = (value as { mockups?: unknown }).mockups;
-  if (!Array.isArray(mockups) || mockups.length !== 3) return false;
-  return mockups.every(
-    (m) =>
-      typeof m === "object" &&
-      m !== null &&
-      typeof (m as Mockup).name === "string" &&
-      typeof (m as Mockup).html === "string" &&
-      (m as Mockup).html.length > 0,
-  );
-}
-
-// Primary parser: extract three mockups from Markdown-fenced code blocks.
-// Accepts both tilde (~~~) and backtick (```) fences. Looks for `## Design X`
-// (or similar) headers to name each block; falls back to Design A/B/C if absent.
 function parseMarkdownMockups(text: string): Mockup[] | null {
   const fenceRegex = /(?:~~~|```)(?:html)?\s*\n([\s\S]*?)\n(?:~~~|```)/g;
   const blocks: { html: string; index: number }[] = [];
@@ -313,26 +168,44 @@ function parseMarkdownMockups(text: string): Mockup[] | null {
   return blocks.map((block, i) => {
     const sliceStart = i === 0 ? 0 : blocks[i - 1].index;
     const headerSearch = text.slice(sliceStart, block.index);
-    const headerMatch = headerSearch.match(
-      /##\s+([A-Z][A-Za-z0-9 _-]*[A-Za-z0-9])/,
-    );
-    const name = headerMatch
-      ? headerMatch[1].trim()
-      : `Design ${String.fromCharCode(65 + i)}`;
-    return { name, html: block.html };
+    const headerMatch = headerSearch.match(/##\s+([A-Z][A-Za-z0-9 _-]*[A-Za-z0-9])/);
+    return {
+      name: headerMatch?.[1]?.trim() || `Design ${String.fromCharCode(65 + i)}`,
+      html: block.html,
+    };
   });
 }
 
+function isValidMockups(value: unknown): value is { mockups: Mockup[] } {
+  if (!value || typeof value !== "object") return false;
+  const mockups = (value as { mockups?: unknown }).mockups;
+  return (
+    Array.isArray(mockups) &&
+    mockups.length === 3 &&
+    mockups.every(
+      (m) =>
+        m &&
+        typeof m === "object" &&
+        typeof (m as Mockup).name === "string" &&
+        typeof (m as Mockup).html === "string" &&
+        (m as Mockup).html.trim().startsWith("<!DOCTYPE html"),
+    )
+  );
+}
+
+function parseMockupsFromText(text: string): Mockup[] {
+  const markdown = parseMarkdownMockups(text);
+  if (markdown) return markdown;
+  const parsed = extractJson(text);
+  if (isValidMockups(parsed)) return parsed.mockups;
+  throw new Error("Model response did not include three valid HTML mockups");
+}
+
 function extractOpenAIText(value: unknown): string {
-  if (typeof value !== "object" || value === null) {
+  if (!value || typeof value !== "object") {
     throw new Error("OpenAI response was not an object");
   }
-  const response = value as {
-    output_text?: unknown;
-    output?: unknown;
-    error?: unknown;
-  };
-
+  const response = value as { output_text?: unknown; output?: unknown };
   if (typeof response.output_text === "string" && response.output_text.trim()) {
     return response.output_text.trim();
   }
@@ -340,130 +213,671 @@ function extractOpenAIText(value: unknown): string {
   const parts: string[] = [];
   if (Array.isArray(response.output)) {
     for (const item of response.output) {
-      if (typeof item !== "object" || item === null) continue;
-      const content = (item as { content?: unknown }).content;
+      const content = item && typeof item === "object" ? (item as { content?: unknown }).content : null;
       if (!Array.isArray(content)) continue;
       for (const block of content) {
-        if (typeof block !== "object" || block === null) continue;
-        const b = block as { type?: unknown; text?: unknown };
-        if (b.type === "output_text" && typeof b.text === "string") {
-          parts.push(b.text);
+        if (
+          block &&
+          typeof block === "object" &&
+          (block as { type?: unknown }).type === "output_text" &&
+          typeof (block as { text?: unknown }).text === "string"
+        ) {
+          parts.push((block as { text: string }).text);
         }
       }
     }
   }
-
   const text = parts.join("\n").trim();
   if (!text) throw new Error("OpenAI returned no text content");
   return text;
 }
 
-function parseMockupsFromText(text: string): {
-  mockups: Mockup[];
-  parseSource: "markdown" | "json";
-} {
-  let rawMockups: Mockup[] | null = parseMarkdownMockups(text);
-  let parseSource: "markdown" | "json" = "markdown";
-  if (!rawMockups) {
-    try {
-      const parsed = extractJson(text);
-      if (isValidMockups(parsed)) {
-        rawMockups = parsed.mockups;
-        parseSource = "json";
-      }
-    } catch {
-      // fall through to the error below
-    }
+function parseClientImages(value: unknown): ClientImageAsset[] {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) throw new Error("Client images must be an array");
+  if (value.length > MAX_CLIENT_IMAGES) {
+    throw new Error(`Provide at most ${MAX_CLIENT_IMAGES} client images`);
   }
-  if (!rawMockups) {
-    throw new Error("Model response did not match the expected mockups shape");
-  }
-  return { mockups: rawMockups, parseSource };
-}
 
-function injectUploadedAssets(
-  rawMockups: Mockup[],
-  logoDataUrl: string,
-  heroPhotoStr: string | null,
-) {
-  return rawMockups.map((m) => {
-    let html = m.html.split(LOGO_PLACEHOLDER).join(logoDataUrl);
-    if (heroPhotoStr) {
-      html = html.split(HERO_IMAGE_PLACEHOLDER).join(heroPhotoStr);
+  let totalBytes = 0;
+  return value.map((item, index) => {
+    if (!item || typeof item !== "object") {
+      throw new Error("Each client image must be an object");
     }
-    return { name: m.name, html };
+    const v = item as Record<string, unknown>;
+    const id = typeof v.id === "string" && /^[A-Za-z0-9_-]{1,48}$/.test(v.id)
+      ? v.id
+      : `asset_${index + 1}`;
+    const name = typeof v.name === "string" && v.name.trim() ? v.name.trim().slice(0, 120) : `Client image ${index + 1}`;
+    const role = v.role === "hero" || v.role === "services" || v.role === "team" || v.role === "gallery" || v.role === "general"
+      ? v.role
+      : "general";
+    if (typeof v.dataUrl !== "string" || !parseImageDataUrl(v.dataUrl)) {
+      throw new Error(`${name} must be a PNG, JPEG, GIF, or WEBP data URL`);
+    }
+    if (v.dataUrl.length > MAX_CLIENT_IMAGE_DATA_URL_BYTES) {
+      throw new Error(`${name} is still too large after compression`);
+    }
+    totalBytes += v.dataUrl.length;
+    if (totalBytes > MAX_TOTAL_CLIENT_IMAGE_BYTES) {
+      throw new Error("Client images are too large in total");
+    }
+    return { id, name, role, dataUrl: v.dataUrl };
   });
 }
 
-function getPlaceholderCounts(rawMockups: Mockup[]) {
-  return {
-    logo: rawMockups.map(
-      (m) => m.html.split(LOGO_PLACEHOLDER).length - 1,
-    ),
-    hero: rawMockups.map(
-      (m) => m.html.split(HERO_IMAGE_PLACEHOLDER).length - 1,
-    ),
-  };
+function buildResearchSummary(packet: ResearchPacket) {
+  const pages = [packet.currentSite, ...packet.inspirations].filter(Boolean) as ResearchPage[];
+  return pages
+    .map((p) => {
+      const status = p.error ? `FAILED: ${p.error}` : `${p.markdown.length} chars`;
+      return `${p.kind.toUpperCase()} ${p.url} (${p.source}) ${status}`;
+    })
+    .join("\n");
+}
+
+async function scrapeFirecrawl(url: string, kind: "current" | "inspiration"): Promise<ResearchPage> {
+  const apiKey = process.env.FIRECRAWL_API_KEY;
+  if (!apiKey) {
+    return {
+      url,
+      kind,
+      source: "provider-tools",
+      markdown: "",
+      links: [],
+      images: [],
+      branding: null,
+      error: "FIRECRAWL_API_KEY not configured",
+    };
+  }
+
+  try {
+    const res = await fetch("https://api.firecrawl.dev/v2/scrape", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        url,
+        formats:
+          kind === "current"
+            ? ["markdown", "screenshot", "links", "images", "branding"]
+            : ["markdown", "screenshot", "branding"],
+        onlyMainContent: true,
+        removeBase64Images: true,
+        blockAds: true,
+        proxy: "auto",
+        timeout: 60000,
+      }),
+    });
+
+    const json = (await res.json().catch(() => null)) as {
+      success?: boolean;
+      data?: Record<string, unknown>;
+      error?: string;
+    } | null;
+    if (!res.ok || !json?.success || !json.data) {
+      throw new Error(json?.error || `Firecrawl error (${res.status})`);
+    }
+    const data = json.data;
+    return {
+      url,
+      kind,
+      source: "firecrawl",
+      markdown: truncate(typeof data.markdown === "string" ? data.markdown : ""),
+      screenshotDataUrl: typeof data.screenshot === "string" && data.screenshot.startsWith("data:image/")
+        ? data.screenshot
+        : undefined,
+      links: Array.isArray(data.links) ? data.links.filter((x): x is string => typeof x === "string").slice(0, 30) : [],
+      images: Array.isArray(data.images) ? data.images.filter((x): x is string => typeof x === "string").slice(0, 30) : [],
+      branding: data.branding ?? null,
+    };
+  } catch (err) {
+    return {
+      url,
+      kind,
+      source: "provider-tools",
+      markdown: "",
+      links: [],
+      images: [],
+      branding: null,
+      error: err instanceof Error ? err.message : "Firecrawl scrape failed",
+    };
+  }
+}
+
+async function buildResearchPacket(currentSite: string, urls: string[]): Promise<ResearchPacket> {
+  const pages = await Promise.all([
+    currentSite ? scrapeFirecrawl(currentSite, "current") : Promise.resolve(undefined),
+    ...urls.map((url) => scrapeFirecrawl(url, "inspiration")),
+  ]);
+  const current = pages[0] as ResearchPage | undefined;
+  const inspirations = pages.slice(1).filter((p): p is ResearchPage => Boolean(p));
+  const all = [current, ...inspirations].filter(Boolean) as ResearchPage[];
+  const firecrawlCount = all.filter((p) => p.source === "firecrawl").length;
+  const source =
+    firecrawlCount === all.length && all.length > 0
+      ? "firecrawl"
+      : firecrawlCount > 0
+        ? "mixed"
+        : "provider-tools";
+  return { currentSite: current, inspirations, source };
+}
+
+function firecrawlScreenshotInputs(packet: ResearchPacket): ParsedImage[] {
+  return [packet.currentSite, ...packet.inspirations]
+    .filter(Boolean)
+    .flatMap((p) => {
+      const screenshot = (p as ResearchPage).screenshotDataUrl;
+      const parsed = screenshot ? parseImageDataUrl(screenshot) : null;
+      return parsed ? [{ ...parsed, label: `${(p as ResearchPage).kind} screenshot: ${(p as ResearchPage).url}` }] : [];
+    })
+    .slice(0, 4);
 }
 
 async function generateWithOpenAI(args: {
   apiKey: string;
   prompt: string;
-  parsedScreenshots: ParsedScreenshot[];
-  startedAt: number;
+  images?: ParsedImage[];
+  useWebSearch?: boolean;
+  maxOutputTokens?: number;
 }) {
-  const { apiKey, prompt, parsedScreenshots, startedAt } = args;
   const model = process.env.OPENAI_MOCKUP_MODEL || DEFAULT_OPENAI_MODEL;
-
+  const reasoningEffort = process.env.OPENAI_REASONING_EFFORT || DEFAULT_OPENAI_REASONING;
   const content = [
-    ...parsedScreenshots.map((s) => ({
+    ...(args.images ?? []).map((s) => ({
       type: "input_image",
       image_url: `data:${s.mediaType};base64,${s.base64}`,
-      detail: "high",
+      detail: "auto",
     })),
-    { type: "input_text", text: prompt },
+    { type: "input_text", text: args.prompt },
   ];
 
-  console.log(
-    `[generate] calling OpenAI (model=${model}, reasoning=medium, max_output_tokens=48000, web_search max_tool_calls=8)…`,
-  );
+  const body: Record<string, unknown> = {
+    model,
+    input: [{ role: "user", content }],
+    max_output_tokens: args.maxOutputTokens ?? 24000,
+    reasoning: { effort: reasoningEffort },
+    store: false,
+  };
+  if (args.useWebSearch) {
+    body.tools = [{ type: "web_search", search_context_size: "medium" }];
+    body.max_tool_calls = 8;
+  }
+
   const res = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
+      Authorization: `Bearer ${args.apiKey}`,
     },
-    body: JSON.stringify({
-      model,
-      input: [{ role: "user", content }],
-      max_output_tokens: 48000,
-      reasoning: { effort: "medium" },
-      tools: [{ type: "web_search", search_context_size: "medium" }],
-      max_tool_calls: 8,
-      store: false,
-    }),
+    body: JSON.stringify(body),
   });
 
   const json = (await res.json().catch(() => null)) as unknown;
   if (!res.ok) {
     const message =
+      json &&
       typeof json === "object" &&
-      json !== null &&
-      typeof (json as { error?: { message?: unknown } }).error?.message ===
-        "string"
+      typeof (json as { error?: { message?: unknown } }).error?.message === "string"
         ? (json as { error: { message: string } }).error.message
         : `OpenAI API error (${res.status})`;
     throw new Error(message);
   }
-
-  console.log("[generate] OpenAI responded", {
-    elapsedSec: ((Date.now() - startedAt) / 1000).toFixed(1),
-  });
-
   return extractOpenAIText(json);
 }
 
+async function generateWithAnthropic(args: {
+  apiKey: string;
+  prompt: string;
+  images?: ParsedImage[];
+  useWebFetch?: boolean;
+  maxTokens?: number;
+}) {
+  const model = process.env.ANTHROPIC_MOCKUP_MODEL || DEFAULT_ANTHROPIC_MODEL;
+  const client = new Anthropic({ apiKey: args.apiKey });
+  const content = [
+    ...(args.images ?? []).map((s) => ({
+      type: "image",
+      source: { type: "base64", media_type: s.mediaType, data: s.base64 },
+    })),
+    { type: "text", text: args.prompt },
+  ];
+
+  const request: Record<string, unknown> = {
+    model,
+    max_tokens: args.maxTokens ?? 24000,
+    messages: [{ role: "user", content }],
+  };
+  if (args.useWebFetch) {
+    request.betas = ["web-fetch-2025-09-10"];
+    request.tools = [
+      {
+        type: "web_fetch_20250910",
+        name: "web_fetch",
+        max_uses: 8,
+        max_content_tokens: 12000,
+      },
+    ];
+  }
+
+  const stream = client.beta.messages.stream(request as never);
+  const response = await stream.finalMessage();
+  const text = response.content
+    .filter((block): block is Anthropic.Beta.BetaTextBlock => block.type === "text")
+    .map((block) => block.text)
+    .join("\n")
+    .trim();
+  if (!text) throw new Error("Anthropic returned no text content");
+  return text;
+}
+
+async function generateModelText(args: {
+  provider: GenerationProvider;
+  apiKey: string;
+  prompt: string;
+  images?: ParsedImage[];
+  useProviderTools?: boolean;
+  maxTokens?: number;
+}) {
+  if (args.provider === "openai") {
+    return generateWithOpenAI({
+      apiKey: args.apiKey,
+      prompt: args.prompt,
+      images: args.images,
+      useWebSearch: args.useProviderTools,
+      maxOutputTokens: args.maxTokens,
+    });
+  }
+  return generateWithAnthropic({
+    apiKey: args.apiKey,
+    prompt: args.prompt,
+    images: args.images,
+    useWebFetch: args.useProviderTools,
+    maxTokens: args.maxTokens,
+  });
+}
+
+function buildAnalysisPrompt(args: {
+  clientName: string;
+  currentSite: string;
+  urls: string[];
+  brandColor: string;
+  research: ResearchPacket;
+  projectBrief: string;
+  audience: string;
+  goals: string;
+  mustHaves: string;
+  avoidList: string;
+  compNotes: string;
+  styleNotes: string;
+  imageAssets: ClientImageAsset[];
+}) {
+  const researchForPrompt = stripBase64ForPrompt(args.research);
+  return `You are a senior brand strategist and web art director. Create the strategy packet for 3 premium homepage mockups for ${args.clientName}.
+
+Return ONLY JSON with this exact shape:
+{
+  "brandProfile": "concise brand truth, services/products, voice, audience, factual constraints",
+  "inspirationProfile": "visual inspiration synthesis: palette, typography, imagery, layout DNA, comp URL roles",
+  "directions": [
+    { "name": "Design A name", "angle": "...", "palette": "...", "typography": "...", "layout": "...", "imagery": "..." },
+    { "name": "Design B name", "angle": "...", "palette": "...", "typography": "...", "layout": "...", "imagery": "..." },
+    { "name": "Design C name", "angle": "...", "palette": "...", "typography": "...", "layout": "...", "imagery": "..." }
+  ]
+}
+
+Canonical client website: ${args.currentSite || "(none provided)"}
+Inspiration URLs: ${args.urls.join(", ") || "(none provided)"}
+Brand color hints: ${args.brandColor || "designer's choice"}
+Project brief: ${args.projectBrief || "(none)"}
+Audience: ${args.audience || "(infer from client site and brief)"}
+Goals: ${args.goals || "(infer)"}
+Must-haves: ${args.mustHaves || "(none)"}
+Avoid: ${args.avoidList || "(none)"}
+Comp usage notes: ${args.compNotes || "(none)"}
+Style notes: ${args.styleNotes || "(none)"}
+Client image assets available: ${args.imageAssets.map((img) => `${clientImagePlaceholder(img.id)} = ${img.name} (${img.role})`).join("; ") || "(none)"}
+
+Research packet:
+${JSON.stringify(researchForPrompt, null, 2)}
+
+Rules:
+- Treat the current site as brand truth when present.
+- Inspiration sites are visual direction only unless the user explicitly says otherwise.
+- Do not invent facts that conflict with research.
+- The 3 directions must be visibly different, premium, and practical to render as standalone Tailwind HTML.`;
+}
+
+function fallbackAnalysis(clientName: string): DesignAnalysis {
+  return {
+    brandProfile: `${clientName} brand profile could not be parsed from the strategy response. Use the provided brief, current site, and assets as the source of truth.`,
+    inspirationProfile: "Use the provided screenshots, Firecrawl research, and inspiration URLs for palette, typography, imagery, and layout direction.",
+    directions: [
+      {
+        name: "Design A",
+        angle: "Premium editorial homepage with strong hero storytelling.",
+        palette: "Brand-led palette with one confident accent.",
+        typography: "Elegant display headings with readable sans-serif body copy.",
+        layout: "Asymmetric hero, rich service cards, proof-forward CTA.",
+        imagery: "Use client photos prominently and crop them intentionally.",
+      },
+      {
+        name: "Design B",
+        angle: "Conversion-focused modern homepage.",
+        palette: "Clean surfaces, high contrast CTAs, restrained accent use.",
+        typography: "Bold sans-serif hierarchy.",
+        layout: "Clear hero, benefits grid, testimonial band, direct booking/contact CTA.",
+        imagery: "Use client photos as trust-building proof.",
+      },
+      {
+        name: "Design C",
+        angle: "Distinctive brand-forward concept.",
+        palette: "More expressive interpretation of the brand colors.",
+        typography: "Mix confident heading scale with warm body copy.",
+        layout: "Immersive hero, gallery/service rhythm, memorable footer CTA.",
+        imagery: "Use the strongest real client images as primary design material.",
+      },
+    ],
+  };
+}
+
+function parseAnalysis(text: string, clientName: string): DesignAnalysis {
+  try {
+    const parsed = extractJson(text) as Partial<DesignAnalysis>;
+    const directions = Array.isArray(parsed.directions) ? parsed.directions.slice(0, 3) : [];
+    if (typeof parsed.brandProfile === "string" && directions.length === 3) {
+      return {
+        brandProfile: parsed.brandProfile,
+        inspirationProfile: typeof parsed.inspirationProfile === "string" ? parsed.inspirationProfile : "",
+        directions: directions.map((d, i) => ({
+          name: typeof d.name === "string" ? d.name : `Design ${String.fromCharCode(65 + i)}`,
+          angle: typeof d.angle === "string" ? d.angle : "",
+          palette: typeof d.palette === "string" ? d.palette : "",
+          typography: typeof d.typography === "string" ? d.typography : "",
+          layout: typeof d.layout === "string" ? d.layout : "",
+          imagery: typeof d.imagery === "string" ? d.imagery : "",
+        })),
+      };
+    }
+  } catch {}
+  return fallbackAnalysis(clientName);
+}
+
+function buildHtmlPrompt(args: {
+  clientName: string;
+  brandColor: string;
+  logoBackground: LogoBackground;
+  projectBrief: string;
+  heroDirection: string;
+  analysis: DesignAnalysis;
+  imageAssets: ClientImageAsset[];
+  research: ResearchPacket;
+  usedProviderTools: boolean;
+}) {
+  const imageList = args.imageAssets
+    .map((img) => `- ${clientImagePlaceholder(img.id)}: ${img.name}, role=${img.role}`)
+    .join("\n");
+  const currentSite = args.research.currentSite?.url || "";
+  const inspirationUrls = args.research.inspirations.map((p) => p.url).join(", ");
+  const providerToolInstruction = args.usedProviderTools
+    ? "Use your web tool on the current site and inspiration URLs before writing if Firecrawl research is empty or failed."
+    : "Do not browse unless needed; the research packet below is the shared source of truth.";
+
+  return `You are a senior web designer creating 3 state-of-the-art homepage mockups for ${args.clientName}.
+
+${providerToolInstruction}
+
+BRAND PROFILE:
+${args.analysis.brandProfile}
+
+INSPIRATION PROFILE:
+${args.analysis.inspirationProfile}
+
+CREATIVE DIRECTIONS:
+${JSON.stringify(args.analysis.directions, null, 2)}
+
+CLIENT CURRENT SITE: ${currentSite || "(none)"}
+INSPIRATION URLS: ${inspirationUrls || "(none)"}
+BRAND COLOR HINTS: ${args.brandColor || "designer's choice"}
+PROJECT BRIEF: ${args.projectBrief || "(none)"}
+HERO DIRECTION: ${args.heroDirection || "(none)"}
+
+LOGO PLACEHOLDER:
+Use exactly ${LOGO_PLACEHOLDER} anywhere the logo appears.
+
+CLIENT IMAGE PLACEHOLDERS:
+${imageList || "(none)"}
+
+Client image rules:
+- If a hero-role image exists, use it in the hero of all 3 mockups.
+- Use service-role images in service/product cards when available.
+- Use team-role images in a team/trust section when available.
+- Use gallery-role images in gallery or proof sections.
+- General images may be used where they strengthen authenticity.
+- Never invent data URLs; only use placeholders exactly as written.
+- Use descriptive alt text.
+
+Logo background constraint:
+${args.logoBackground === "either" ? "Choose whatever header background best fits each design." : `The logo works best on ${args.logoBackground} backgrounds. Ensure it stays visible in every design.`}
+
+For each of the 3 mockups:
+- Make a complete standalone HTML file with <!DOCTYPE html>, <html>, <head>, and <body>.
+- Include <meta name="viewport" content="width=device-width, initial-scale=1">.
+- Use Tailwind CSS via CDN.
+- Include a header with prominent logo, hero, services/features or brief-specific primary section, social proof/testimonials, CTA, and footer.
+- Make each mockup visually distinct and tied to one creative direction.
+- Use real-looking client-relevant copy; no lorem ipsum.
+- Make it premium and polished, not a wireframe.
+- Fully responsive at 375px, 768px, and 1280px+. No horizontal scroll.
+- Mobile header must include constrained logo, hamburger icon, hidden desktop nav, and a real JS-powered collapsible nav.
+- Keep each HTML focused; target under 14,000 characters per mockup.
+
+OUTPUT FORMAT:
+Return EXACTLY three Markdown code blocks, each preceded by a Design header, using tilde fences:
+## Design A
+~~~html
+<!DOCTYPE html>
+...
+</html>
+~~~
+
+## Design B
+~~~html
+...
+~~~
+
+## Design C
+~~~html
+...
+~~~
+
+The first line must be ## Design A. No prose before, between, or after.`;
+}
+
+function injectUploadedAssets(rawMockups: Mockup[], logoDataUrl: string, imageAssets: ClientImageAsset[], legacyHeroPhoto: string | null) {
+  return rawMockups.map((m) => {
+    let html = m.html.split(LOGO_PLACEHOLDER).join(logoDataUrl);
+    if (legacyHeroPhoto) {
+      html = html.split(HERO_IMAGE_PLACEHOLDER).join(legacyHeroPhoto);
+    }
+    for (const image of imageAssets) {
+      html = html.split(clientImagePlaceholder(image.id)).join(image.dataUrl);
+    }
+    return { name: m.name, html };
+  });
+}
+
+function countPlaceholderUses(rawMockup: Mockup, imageAssets: ClientImageAsset[]) {
+  return {
+    logo: rawMockup.html.split(LOGO_PLACEHOLDER).length - 1,
+    clientImages: imageAssets.reduce<Record<string, number>>((acc, img) => {
+      acc[img.id] = rawMockup.html.split(clientImagePlaceholder(img.id)).length - 1;
+      return acc;
+    }, {}),
+  };
+}
+
+function localQa(raw: Mockup, imageAssets: ClientImageAsset[]): MockupQAReport {
+  const issues: string[] = [];
+  if (!raw.html.includes(LOGO_PLACEHOLDER)) issues.push("Logo placeholder is missing.");
+  if (!/viewport/i.test(raw.html)) issues.push("Viewport meta tag may be missing.");
+  if (!/hamburger|aria-label=["']?(open|toggle|menu)|<button[\s\S]{0,200}(span|svg)/i.test(raw.html)) {
+    issues.push("Mobile hamburger/menu button is not obvious.");
+  }
+  const heroAssets = imageAssets.filter((img) => img.role === "hero");
+  if (heroAssets.length > 0 && !heroAssets.some((img) => raw.html.includes(clientImagePlaceholder(img.id)))) {
+    issues.push("No hero-role client image placeholder was used.");
+  }
+  if (raw.html.length > 24000) issues.push("HTML is unusually large and may be slow or bloated.");
+  return {
+    name: raw.name,
+    pass: issues.length === 0,
+    score: Math.max(60, 95 - issues.length * 12),
+    issues,
+    repairInstructions: issues.join(" "),
+  };
+}
+
+async function renderMockupScreenshots(html: string) {
+  try {
+    const { chromium } = await import("playwright");
+    const browser = await chromium.launch({ headless: true });
+    const shots: ParsedImage[] = [];
+    for (const viewport of [
+      { width: 375, height: 900, label: "mobile 375px" },
+      { width: 768, height: 1000, label: "tablet 768px" },
+      { width: 1280, height: 900, label: "desktop 1280px" },
+    ]) {
+      const page = await browser.newPage({ viewport: { width: viewport.width, height: viewport.height } });
+      await page.setContent(html, { waitUntil: "networkidle", timeout: 30000 });
+      const buffer = await page.screenshot({ fullPage: false, type: "png" });
+      await page.close();
+      shots.push({ mediaType: "image/png", base64: buffer.toString("base64"), label: viewport.label });
+    }
+    await browser.close();
+    return shots;
+  } catch (err) {
+    console.warn("[generate] Playwright render QA skipped", err);
+    return [];
+  }
+}
+
+function buildQaPrompt(mockupName: string, localReport: MockupQAReport) {
+  return `You are a meticulous senior design QA reviewer. Review the rendered screenshots of ${mockupName}.
+
+Return ONLY JSON:
+{
+  "pass": true,
+  "score": 0,
+  "issues": ["..."],
+  "repairInstructions": "specific instructions to fix the HTML if needed"
+}
+
+Judge:
+- premium visual quality
+- no horizontal overflow at mobile/tablet/desktop
+- logo visible and appropriately sized
+- mobile nav appears usable
+- client images are used authentically
+- spacing, typography, and CTA hierarchy look polished
+
+Local static checks already found:
+${localReport.issues.length ? localReport.issues.join("\n") : "No static issues."}`;
+}
+
+function parseQa(text: string, fallback: MockupQAReport): MockupQAReport {
+  try {
+    const parsed = extractJson(text) as Partial<MockupQAReport>;
+    const issues = Array.isArray(parsed.issues)
+      ? parsed.issues.filter((x): x is string => typeof x === "string")
+      : fallback.issues;
+    return {
+      name: fallback.name,
+      pass: typeof parsed.pass === "boolean" ? parsed.pass && issues.length === 0 : fallback.pass,
+      score: typeof parsed.score === "number" ? Math.max(0, Math.min(100, parsed.score)) : fallback.score,
+      issues,
+      repairInstructions:
+        typeof parsed.repairInstructions === "string"
+          ? parsed.repairInstructions
+          : fallback.repairInstructions,
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+async function qaMockup(args: {
+  provider: GenerationProvider;
+  apiKey: string;
+  raw: Mockup;
+  injected: Mockup;
+  imageAssets: ClientImageAsset[];
+}) {
+  const local = localQa(args.raw, args.imageAssets);
+  const rendered = await renderMockupScreenshots(args.injected.html);
+  if (rendered.length === 0) return local;
+
+  try {
+    const text = await generateModelText({
+      provider: args.provider,
+      apiKey: args.apiKey,
+      prompt: buildQaPrompt(args.raw.name, local),
+      images: rendered,
+      maxTokens: 4000,
+    });
+    const qa = parseQa(text, local);
+    if (!local.pass) {
+      return {
+        ...qa,
+        pass: false,
+        issues: Array.from(new Set([...local.issues, ...qa.issues])),
+        repairInstructions: [local.repairInstructions, qa.repairInstructions].filter(Boolean).join(" "),
+      };
+    }
+    return qa;
+  } catch (err) {
+    console.warn("[generate] model QA failed", err);
+    return local;
+  }
+}
+
+function buildRepairPrompt(args: {
+  raw: Mockup;
+  qa: MockupQAReport;
+  imageAssets: ClientImageAsset[];
+  logoBackground: LogoBackground;
+}) {
+  return `Repair this standalone HTML mockup. Return ONLY one html fenced code block. Preserve the visual direction, copy, logo placeholder, and client image placeholders.
+
+QA issues:
+${args.qa.issues.join("\n")}
+
+Repair instructions:
+${args.qa.repairInstructions}
+
+Required placeholders:
+- ${LOGO_PLACEHOLDER}
+${args.imageAssets.map((img) => `- ${clientImagePlaceholder(img.id)} (${img.role})`).join("\n")}
+
+Logo background: ${args.logoBackground}
+
+HTML:
+~~~html
+${args.raw.html}
+~~~`;
+}
+
+function parseSingleHtmlBlock(text: string, fallback: Mockup) {
+  const match = text.match(/(?:~~~|```)(?:html)?\s*\n([\s\S]*?)\n(?:~~~|```)/);
+  const html = match?.[1]?.trim();
+  if (html && html.startsWith("<!DOCTYPE html")) return { ...fallback, html };
+  return fallback;
+}
+
 export async function POST(req: Request) {
+  const startedAt = Date.now();
   let body: RequestBody;
   try {
     body = (await req.json()) as RequestBody;
@@ -471,257 +885,217 @@ export async function POST(req: Request) {
     return badRequest("Request body must be JSON");
   }
 
-  const {
-    urls,
-    currentSite,
-    logoDataUrl,
-    brandColor,
-    clientName,
-    screenshots,
-    heroPhotoDataUrl,
-    heroDirection,
-    logoBackground,
-    generationProvider,
-  } = body;
-
-  if (
-    !Array.isArray(urls) ||
-    !urls.every((u) => typeof u === "string")
-  ) {
+  const urls = body.urls;
+  if (!Array.isArray(urls) || !urls.every((u) => typeof u === "string")) {
     return badRequest("Inspiration URLs must be an array of strings");
   }
-  const cleanedUrls = (urls as string[])
-    .map((u) => u.trim())
-    .filter((u) => u.length > 0);
-  if (cleanedUrls.length === 0) {
-    return badRequest("Provide at least one inspiration URL");
-  }
-  if (cleanedUrls.length > 3) {
-    return badRequest("Provide at most 3 inspiration URLs");
-  }
-  if (typeof logoDataUrl !== "string" || !logoDataUrl.startsWith("data:image/")) {
+  const cleanedUrls = urls.map((u) => u.trim()).filter(Boolean).slice(0, 3);
+  if (cleanedUrls.length === 0) return badRequest("Provide at least one inspiration URL");
+
+  const logoDataUrl = body.logoDataUrl;
+  if (typeof logoDataUrl !== "string" || !parseImageDataUrl(logoDataUrl)) {
     return badRequest("Logo must be uploaded as an image data URL");
   }
-  if (typeof clientName !== "string" || clientName.trim().length === 0) {
-    return badRequest("Client name is required");
-  }
-  const colorStr = typeof brandColor === "string" ? brandColor : "";
-  if (currentSite !== undefined && typeof currentSite !== "string") {
-    return badRequest("Current site must be a string if provided");
-  }
-  const currentSiteStr = typeof currentSite === "string" ? currentSite : "";
 
-  let heroPhotoStr: string | null = null;
-  if (
-    heroPhotoDataUrl !== undefined &&
-    heroPhotoDataUrl !== null &&
-    heroPhotoDataUrl !== ""
-  ) {
-    if (
-      typeof heroPhotoDataUrl !== "string" ||
-      !heroPhotoDataUrl.startsWith("data:image/")
-    ) {
-      return badRequest("Hero photo must be an image data URL");
-    }
-    if (heroPhotoDataUrl.length > MAX_HERO_PHOTO_BASE64_BYTES) {
-      return badRequest("Hero photo is over 5MB");
-    }
-    heroPhotoStr = heroPhotoDataUrl;
-  }
+  const clientName = cleanString(body.clientName);
+  if (!clientName) return badRequest("Client name is required");
 
-  const heroDirectionStr =
-    typeof heroDirection === "string" ? heroDirection.trim() : "";
-  const projectBriefStr =
-    typeof body.projectBrief === "string" ? body.projectBrief.trim() : "";
-  const logoBgStr: LogoBackground =
-    logoBackground === "light" || logoBackground === "dark"
-      ? logoBackground
-      : "either";
-  const provider: GenerationProvider =
-    generationProvider === "anthropic" ? "anthropic" : "openai";
-
-  const parsedScreenshots: ParsedScreenshot[] = [];
-  if (screenshots !== undefined) {
-    if (!Array.isArray(screenshots) || !screenshots.every((s) => typeof s === "string")) {
-      return badRequest("Screenshots must be an array of image data URL strings");
-    }
-    if (screenshots.length > MAX_SCREENSHOTS) {
-      return badRequest(`Provide at most ${MAX_SCREENSHOTS} screenshots`);
-    }
-    for (const dataUrl of screenshots as string[]) {
-      if (dataUrl.length > MAX_SCREENSHOT_BASE64_BYTES) {
-        return badRequest("One of the screenshots is over 5MB");
-      }
-      const parsed = parseScreenshotDataUrl(dataUrl);
-      if (!parsed) {
-        return badRequest("Screenshots must be PNG, JPEG, GIF, or WEBP data URLs");
-      }
-      parsedScreenshots.push(parsed);
-    }
-  }
-
-  const apiKey =
-    provider === "openai"
-      ? process.env.OPENAI_API_KEY
-      : process.env.ANTHROPIC_API_KEY;
+  const provider: GenerationProvider = body.generationProvider === "anthropic" ? "anthropic" : "openai";
+  const apiKey = provider === "openai" ? process.env.OPENAI_API_KEY : process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
     return NextResponse.json(
-      {
-        error:
-          provider === "openai"
-            ? "Server is missing OPENAI_API_KEY"
-            : "Server is missing ANTHROPIC_API_KEY",
-      },
+      { error: provider === "openai" ? "Server is missing OPENAI_API_KEY" : "Server is missing ANTHROPIC_API_KEY" },
       { status: 500 },
     );
   }
 
-  const prompt = buildPrompt({
-    urls: cleanedUrls,
-    currentSite: currentSiteStr,
-    brandColor: colorStr,
-    clientName: clientName.trim(),
-    screenshotCount: parsedScreenshots.length,
-    hasHeroPhoto: heroPhotoStr !== null,
-    heroDirection: heroDirectionStr,
-    logoBackground: logoBgStr,
-    generationProvider: provider,
-    projectBrief: projectBriefStr,
-  });
+  let clientImages: ClientImageAsset[];
+  try {
+    clientImages = parseClientImages(body.clientImages);
+  } catch (err) {
+    return badRequest(err instanceof Error ? err.message : "Invalid client images");
+  }
 
-  const client = provider === "anthropic" ? new Anthropic({ apiKey }) : null;
+  let legacyHeroPhoto: string | null = null;
+  if (typeof body.heroPhotoDataUrl === "string" && body.heroPhotoDataUrl.trim()) {
+    if (!parseImageDataUrl(body.heroPhotoDataUrl)) {
+      return badRequest("Hero photo must be an image data URL");
+    }
+    if (body.heroPhotoDataUrl.length > MAX_CLIENT_IMAGE_DATA_URL_BYTES) {
+      return badRequest("Hero photo is too large; upload it through the compressed client image library");
+    }
+    legacyHeroPhoto = body.heroPhotoDataUrl;
+    if (!clientImages.some((img) => img.role === "hero")) {
+      clientImages = [
+        {
+          id: "legacy_hero",
+          name: "Hero photo",
+          role: "hero" as const,
+          dataUrl: body.heroPhotoDataUrl,
+        },
+        ...clientImages,
+      ].slice(0, MAX_CLIENT_IMAGES);
+    }
+  }
 
-  const startedAt = Date.now();
-  console.log("[generate] request received", {
+  const parsedScreenshots: ParsedImage[] = [];
+  if (body.screenshots !== undefined) {
+    if (!Array.isArray(body.screenshots) || !body.screenshots.every((s) => typeof s === "string")) {
+      return badRequest("Screenshots must be an array of image data URL strings");
+    }
+    if (body.screenshots.length > MAX_SCREENSHOTS) return badRequest(`Provide at most ${MAX_SCREENSHOTS} screenshots`);
+    for (const dataUrl of body.screenshots as string[]) {
+      if (dataUrl.length > MAX_SCREENSHOT_DATA_URL_BYTES) return badRequest("One screenshot is too large");
+      const parsed = parseImageDataUrl(dataUrl);
+      if (!parsed) return badRequest("Screenshots must be PNG, JPEG, GIF, or WEBP data URLs");
+      parsedScreenshots.push(parsed);
+    }
+  }
+
+  const currentSite = cleanString(body.currentSite);
+  const brandColor = cleanString(body.brandColor);
+  const projectBrief = cleanString(body.projectBrief);
+  const heroDirection = cleanString(body.heroDirection);
+  const logoBackground: LogoBackground =
+    body.logoBackground === "light" || body.logoBackground === "dark" ? body.logoBackground : "either";
+  const qualityMode: QualityMode = "premium";
+
+  console.log("[generate] premium request received", {
     provider,
-    clientName: clientName.trim(),
+    clientName,
+    currentSite: currentSite || null,
     inspirationUrls: cleanedUrls.length,
-    screenshotCount: parsedScreenshots.length,
-    currentSite: currentSiteStr.trim() || null,
-    logoBytes: logoDataUrl.length,
-    heroPhotoBytes: heroPhotoStr?.length ?? 0,
-    heroDirectionChars: heroDirectionStr.length,
-    logoBackground: logoBgStr,
-    projectBriefChars: projectBriefStr.length,
-    promptChars: prompt.length,
+    screenshots: parsedScreenshots.length,
+    clientImages: clientImages.length,
+    qualityMode,
   });
-
-  const userContent: Anthropic.Beta.BetaContentBlockParam[] = [
-    ...parsedScreenshots.map(
-      (s) =>
-        ({
-          type: "image",
-          source: { type: "base64", media_type: s.mediaType, data: s.base64 },
-        }) satisfies Anthropic.Beta.BetaImageBlockParam,
-    ),
-    { type: "text", text: prompt },
-  ];
 
   try {
-    let text: string;
-    if (provider === "openai") {
-      text = await generateWithOpenAI({
-        apiKey,
-        prompt,
-        parsedScreenshots,
-        startedAt,
-      });
-    } else {
-      if (!client) throw new Error("Anthropic client was not initialized");
-      console.log(`[generate] streaming Claude (model=${DEFAULT_ANTHROPIC_MODEL}, max_tokens=48000, web_fetch max_uses=8, max_content_tokens=12000)…`);
-      const stream = client.beta.messages.stream({
-        model: DEFAULT_ANTHROPIC_MODEL,
-        max_tokens: 48000,
-        betas: ["web-fetch-2025-09-10"],
-        tools: [
-          {
-            type: "web_fetch_20250910",
-            name: "web_fetch",
-            max_uses: 8,
-            max_content_tokens: 12000,
-          },
-        ],
-        messages: [{ role: "user", content: userContent }],
-      });
+    console.log("[generate] stage=research");
+    const research = await buildResearchPacket(currentSite, cleanedUrls);
+    const useProviderTools = research.source !== "firecrawl";
+    const researchImages = firecrawlScreenshotInputs(research);
 
-      stream.on("connect", () => {
-        console.log(`[generate] connected (+${((Date.now() - startedAt) / 1000).toFixed(1)}s)`);
-      });
+    console.log("[generate] stage=directions", {
+      researchSource: research.source,
+      firecrawlScreenshots: researchImages.length,
+    });
+    const analysisPrompt = buildAnalysisPrompt({
+      clientName,
+      currentSite,
+      urls: cleanedUrls,
+      brandColor,
+      research,
+      projectBrief,
+      audience: cleanString(body.audience),
+      goals: cleanString(body.goals),
+      mustHaves: cleanString(body.mustHaves),
+      avoidList: cleanString(body.avoidList),
+      compNotes: cleanString(body.compNotes),
+      styleNotes: cleanString(body.styleNotes),
+      imageAssets: clientImages,
+    });
+    const analysisText = await generateModelText({
+      provider,
+      apiKey,
+      prompt: analysisPrompt,
+      images: [...parsedScreenshots, ...researchImages].slice(0, 7),
+      useProviderTools,
+      maxTokens: 8000,
+    });
+    const analysis = parseAnalysis(analysisText, clientName);
 
-      let textChars = 0;
-      stream.on("streamEvent", (event) => {
-        const t = ((Date.now() - startedAt) / 1000).toFixed(1);
-        if (event.type === "message_start") {
-          console.log(`[generate] +${t}s message_start (model=${event.message.model})`);
-        } else if (event.type === "content_block_start") {
-          const b = event.content_block as { type: string; name?: string; input?: unknown };
-          const label = b.name ? `${b.type}:${b.name}` : b.type;
-          const inputPreview =
-            b.input && typeof b.input === "object"
-              ? ` ${JSON.stringify(b.input).slice(0, 200)}`
-              : "";
-          console.log(`[generate] +${t}s block_start [${event.index}] ${label}${inputPreview}`);
-        } else if (event.type === "content_block_stop") {
-          console.log(`[generate] +${t}s block_stop  [${event.index}]`);
-        } else if (event.type === "message_delta") {
-          console.log(`[generate] +${t}s message_delta stop_reason=${event.delta.stop_reason}`);
-        }
-      });
+    console.log("[generate] stage=html", {
+      directions: analysis.directions.map((d) => d.name),
+    });
+    const htmlPrompt = buildHtmlPrompt({
+      clientName,
+      brandColor,
+      logoBackground,
+      projectBrief,
+      heroDirection,
+      analysis,
+      imageAssets: clientImages,
+      research,
+      usedProviderTools: useProviderTools,
+    });
+    const htmlText = await generateModelText({
+      provider,
+      apiKey,
+      prompt: htmlPrompt,
+      images: [...parsedScreenshots, ...researchImages].slice(0, 7),
+      useProviderTools,
+      maxTokens: 48000,
+    });
+    const rawMockups = parseMockupsFromText(htmlText);
+    let injectedMockups = injectUploadedAssets(rawMockups, logoDataUrl, clientImages, legacyHeroPhoto);
 
-      stream.on("text", (delta) => {
-        const before = textChars;
-        textChars += delta.length;
-        // Log every 5,000 text chars so we see writing progress without flooding
-        if (Math.floor(before / 5000) !== Math.floor(textChars / 5000)) {
-          const t = ((Date.now() - startedAt) / 1000).toFixed(1);
-          console.log(`[generate] +${t}s writing… ${textChars} chars so far`);
-        }
-      });
+    console.log("[generate] stage=qa");
+    let qaReports = await Promise.all(
+      rawMockups.map((raw, i) =>
+        qaMockup({
+          provider,
+          apiKey,
+          raw,
+          injected: injectedMockups[i],
+          imageAssets: clientImages,
+        }),
+      ),
+    );
 
-      const response = await stream.finalMessage();
+    const failingIndexes = qaReports
+      .map((qa, i) => ({ qa, i }))
+      .filter(({ qa }) => !qa.pass || qa.score < 82)
+      .map(({ i }) => i);
 
-      const elapsedMs = Date.now() - startedAt;
-      const blockCounts = response.content.reduce<Record<string, number>>((acc, b) => {
-        acc[b.type] = (acc[b.type] ?? 0) + 1;
-        return acc;
-      }, {});
-      console.log("[generate] Claude responded", {
-        elapsedSec: (elapsedMs / 1000).toFixed(1),
-        stop_reason: response.stop_reason,
-        usage: response.usage,
-        contentBlocks: blockCounts,
-      });
-
-      text = response.content
-        .filter((block): block is Anthropic.Beta.BetaTextBlock => block.type === "text")
-        .map((block) => block.text)
-        .join("\n")
-        .trim();
-
-      if (!text) {
-        throw new Error("Model returned no text content");
+    if (failingIndexes.length > 0 && MAX_REPAIR_PASSES > 0) {
+      console.log("[generate] stage=repair", { failingIndexes });
+      for (const i of failingIndexes) {
+        const repairText = await generateModelText({
+          provider,
+          apiKey,
+          prompt: buildRepairPrompt({
+            raw: rawMockups[i],
+            qa: qaReports[i],
+            imageAssets: clientImages,
+            logoBackground,
+          }),
+          maxTokens: 18000,
+        });
+        rawMockups[i] = parseSingleHtmlBlock(repairText, rawMockups[i]);
       }
+      injectedMockups = injectUploadedAssets(rawMockups, logoDataUrl, clientImages, legacyHeroPhoto);
+      qaReports = await Promise.all(
+        rawMockups.map((raw, i) =>
+          qaMockup({
+            provider,
+            apiKey,
+            raw,
+            injected: injectedMockups[i],
+            imageAssets: clientImages,
+          }),
+        ),
+      );
     }
 
-    // Primary path: Markdown-fenced output (current prompt format).
-    // Fallback: legacy JSON output (in case the model reverts to it).
-    const { mockups: rawMockups, parseSource } = parseMockupsFromText(text);
-    const mockups = injectUploadedAssets(rawMockups, logoDataUrl, heroPhotoStr);
-    const placeholderHits = getPlaceholderCounts(rawMockups);
-
-    const totalHtmlChars = mockups.reduce((n, m) => n + m.html.length, 0);
+    const placeholderCounts = rawMockups.map((m) => countPlaceholderUses(m, clientImages));
     console.log("[generate] success", {
       provider,
-      mockups: mockups.length,
-      parseSource,
-      placeholderReplacementsPerMockup: placeholderHits.logo,
-      heroPlaceholderReplacementsPerMockup: placeholderHits.hero,
-      screenshotCount: parsedScreenshots.length,
-      totalHtmlChars,
+      researchSource: research.source,
+      mockups: injectedMockups.length,
+      qaScores: qaReports.map((q) => q.score),
+      placeholderCounts,
       elapsedSec: ((Date.now() - startedAt) / 1000).toFixed(1),
     });
 
-    return NextResponse.json({ mockups });
+    return NextResponse.json({
+      mockups: injectedMockups,
+      researchSummary: buildResearchSummary(research),
+      directions: analysis.directions,
+      qaReports,
+      usedProvider: provider,
+      usedResearchSource: research.source,
+    });
   } catch (err) {
     console.error("[generate] failed after", ((Date.now() - startedAt) / 1000).toFixed(1), "s:", err);
     const message =

@@ -1,0 +1,315 @@
+import { NextResponse } from "next/server";
+import Anthropic from "@anthropic-ai/sdk";
+
+export const runtime = "nodejs";
+export const maxDuration = 300;
+
+type GenerationProvider = "anthropic" | "openai";
+type RequestBody = {
+  html?: unknown;
+  instruction?: unknown;
+  clientName?: unknown;
+  mockupName?: unknown;
+  generationProvider?: unknown;
+  projectBrief?: unknown;
+  styleNotes?: unknown;
+};
+type RefineQAReport = {
+  pass: boolean;
+  issues: string[];
+  checkedViewports: string[];
+};
+
+const DEFAULT_OPENAI_MODEL = "gpt-5.5";
+const DEFAULT_ANTHROPIC_MODEL = "claude-opus-4-7";
+
+function badRequest(error: string) {
+  return NextResponse.json({ error }, { status: 400 });
+}
+
+function extractOpenAIText(value: unknown): string {
+  if (!value || typeof value !== "object") {
+    throw new Error("OpenAI response was not an object");
+  }
+  const response = value as { output_text?: unknown; output?: unknown };
+  if (typeof response.output_text === "string" && response.output_text.trim()) {
+    return response.output_text.trim();
+  }
+
+  const parts: string[] = [];
+  if (Array.isArray(response.output)) {
+    for (const item of response.output) {
+      const content =
+        item && typeof item === "object"
+          ? (item as { content?: unknown }).content
+          : null;
+      if (!Array.isArray(content)) continue;
+      for (const block of content) {
+        if (
+          block &&
+          typeof block === "object" &&
+          (block as { type?: unknown }).type === "output_text" &&
+          typeof (block as { text?: unknown }).text === "string"
+        ) {
+          parts.push((block as { text: string }).text);
+        }
+      }
+    }
+  }
+  const text = parts.join("\n").trim();
+  if (!text) throw new Error("OpenAI returned no text content");
+  return text;
+}
+
+function protectDataUrls(html: string) {
+  const assets: string[] = [];
+  const protectedHtml = html.replace(
+    /data:image\/[a-z+.-]+;base64,[A-Za-z0-9+/=]+/g,
+    (match) => {
+      const token = `__EMBEDDED_IMAGE_${assets.length}__`;
+      assets.push(match);
+      return token;
+    },
+  );
+  return { protectedHtml, assets };
+}
+
+function restoreDataUrls(html: string, assets: string[]) {
+  return assets.reduce(
+    (next, dataUrl, index) =>
+      next.split(`__EMBEDDED_IMAGE_${index}__`).join(dataUrl),
+    html,
+  );
+}
+
+function parseHtml(text: string, fallback: string) {
+  const fence = text.match(/(?:~~~|```)(?:html)?\s*\n([\s\S]*?)\n(?:~~~|```)/);
+  const fencedHtml = fence?.[1]?.trim();
+  if (fencedHtml?.startsWith("<!DOCTYPE html")) return fencedHtml;
+
+  const start = text.indexOf("<!DOCTYPE html");
+  const end = text.lastIndexOf("</html>");
+  if (start !== -1 && end !== -1 && end > start) {
+    return text.slice(start, end + "</html>".length).trim();
+  }
+
+  return fallback;
+}
+
+async function callOpenAI(apiKey: string, prompt: string) {
+  const res = await fetch("https://api.openai.com/v1/responses", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model: process.env.OPENAI_MOCKUP_MODEL || DEFAULT_OPENAI_MODEL,
+      input: [{ role: "user", content: [{ type: "input_text", text: prompt }] }],
+      max_output_tokens: 24000,
+      reasoning: { effort: process.env.OPENAI_REASONING_EFFORT || "medium" },
+      store: false,
+    }),
+  });
+  const json = (await res.json().catch(() => null)) as unknown;
+  if (!res.ok) {
+    const message =
+      json &&
+      typeof json === "object" &&
+      typeof (json as { error?: { message?: unknown } }).error?.message ===
+        "string"
+        ? (json as { error: { message: string } }).error.message
+        : `OpenAI API error (${res.status})`;
+    throw new Error(message);
+  }
+  return extractOpenAIText(json);
+}
+
+async function callAnthropic(apiKey: string, prompt: string) {
+  const client = new Anthropic({ apiKey });
+  const stream = client.messages.stream({
+    model: process.env.ANTHROPIC_MOCKUP_MODEL || DEFAULT_ANTHROPIC_MODEL,
+    max_tokens: 24000,
+    messages: [{ role: "user", content: prompt }],
+  });
+  const response = await stream.finalMessage();
+  const text = response.content
+    .filter((block): block is Anthropic.TextBlock => block.type === "text")
+    .map((block) => block.text)
+    .join("\n")
+    .trim();
+  if (!text) throw new Error("Anthropic returned no text content");
+  return text;
+}
+
+function buildPrompt(args: {
+  clientName: string;
+  mockupName: string;
+  instruction: string;
+  html: string;
+  projectBrief: string;
+  styleNotes: string;
+}) {
+  return `You are a senior web designer refining one generated homepage mockup for ${args.clientName}.
+
+Target mockup: ${args.mockupName}
+User edit request:
+${args.instruction}
+
+Project brief context:
+${args.projectBrief || "(none provided)"}
+
+Style notes:
+${args.styleNotes || "(none provided)"}
+
+Rules:
+- Return one complete standalone HTML file only.
+- Preserve the current concept unless the user explicitly asks to change it.
+- Make the requested edit with production-quality visual polish.
+- Keep all existing embedded image placeholder tokens exactly as written, such as __EMBEDDED_IMAGE_0__.
+- Keep Tailwind CDN usage and any mobile nav JavaScript functional.
+- Keep the viewport meta tag.
+- Keep the mockup responsive at 375px, 768px, and desktop widths.
+- Do not add explanations.
+
+Return exactly one HTML code block using tilde fences:
+~~~html
+<!DOCTYPE html>
+...
+</html>
+~~~
+
+Current HTML:
+~~~html
+${args.html}
+~~~`;
+}
+
+async function quickQa(html: string): Promise<RefineQAReport> {
+  const checkedViewports: string[] = [];
+  const issues: string[] = [];
+  if (!html.includes("<meta name=\"viewport\"")) {
+    issues.push("Viewport meta tag may be missing.");
+  }
+  if (!/<button[\s\S]{0,500}(aria-label|span|svg)/i.test(html)) {
+    issues.push("Mobile menu button is not obvious.");
+  }
+
+  try {
+    const { chromium } = await import("playwright");
+    const browser = await chromium.launch({ headless: true });
+    for (const viewport of [
+      { width: 375, height: 900, label: "375px" },
+      { width: 768, height: 1000, label: "768px" },
+      { width: 1280, height: 900, label: "1280px" },
+    ]) {
+      const page = await browser.newPage({
+        viewport: { width: viewport.width, height: viewport.height },
+      });
+      await page.setContent(html, { waitUntil: "networkidle", timeout: 30000 });
+      const overflow = await page.evaluate(
+        () => document.documentElement.scrollWidth > window.innerWidth + 2,
+      );
+      if (overflow) issues.push(`Horizontal overflow at ${viewport.label}.`);
+      checkedViewports.push(viewport.label);
+      await page.close();
+    }
+    await browser.close();
+  } catch (err) {
+    console.warn("[refine] Playwright QA skipped", err);
+  }
+
+  return { pass: issues.length === 0, issues, checkedViewports };
+}
+
+export async function POST(req: Request) {
+  let body: RequestBody;
+  try {
+    body = (await req.json()) as RequestBody;
+  } catch {
+    return badRequest("Request body must be JSON");
+  }
+
+  const html = typeof body.html === "string" ? body.html.trim() : "";
+  const instruction =
+    typeof body.instruction === "string" ? body.instruction.trim() : "";
+  const clientName =
+    typeof body.clientName === "string" && body.clientName.trim()
+      ? body.clientName.trim()
+      : "the client";
+  const mockupName =
+    typeof body.mockupName === "string" && body.mockupName.trim()
+      ? body.mockupName.trim()
+      : "Selected design";
+  const provider: GenerationProvider =
+    body.generationProvider === "anthropic" ? "anthropic" : "openai";
+
+  if (!html.startsWith("<!DOCTYPE html")) {
+    return badRequest("Mockup HTML is required");
+  }
+  if (instruction.length < 4) {
+    return badRequest("Please enter a refinement instruction");
+  }
+
+  const apiKey =
+    provider === "openai"
+      ? process.env.OPENAI_API_KEY
+      : process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) {
+    return NextResponse.json(
+      {
+        error:
+          provider === "openai"
+            ? "Server is missing OPENAI_API_KEY"
+            : "Server is missing ANTHROPIC_API_KEY",
+      },
+      { status: 500 },
+    );
+  }
+
+  const startedAt = Date.now();
+  const { protectedHtml, assets } = protectDataUrls(html);
+  const prompt = buildPrompt({
+    clientName,
+    mockupName,
+    instruction,
+    html: protectedHtml,
+    projectBrief: typeof body.projectBrief === "string" ? body.projectBrief : "",
+    styleNotes: typeof body.styleNotes === "string" ? body.styleNotes : "",
+  });
+
+  try {
+    console.log("[refine] request", {
+      provider,
+      clientName,
+      mockupName,
+      instructionChars: instruction.length,
+      protectedHtmlChars: protectedHtml.length,
+      embeddedAssets: assets.length,
+    });
+    const text =
+      provider === "openai"
+        ? await callOpenAI(apiKey, prompt)
+        : await callAnthropic(apiKey, prompt);
+    const revisedProtectedHtml = parseHtml(text, protectedHtml);
+    const revisedHtml = restoreDataUrls(revisedProtectedHtml, assets);
+    const qaReport = await quickQa(revisedHtml);
+    console.log("[refine] success", {
+      provider,
+      qaPass: qaReport.pass,
+      issues: qaReport.issues.length,
+      elapsedSec: ((Date.now() - startedAt) / 1000).toFixed(1),
+    });
+
+    return NextResponse.json({ mockup: { name: mockupName, html: revisedHtml }, qaReport });
+  } catch (err) {
+    console.error("[refine] failed", err);
+    const message =
+      err instanceof Anthropic.APIError
+        ? `Anthropic API error: ${err.message}`
+        : err instanceof Error
+          ? err.message
+          : "Refinement failed";
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
+}

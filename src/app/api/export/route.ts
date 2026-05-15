@@ -4,6 +4,8 @@ import Anthropic from "@anthropic-ai/sdk";
 export const runtime = "nodejs";
 export const maxDuration = 300;
 
+const DEFAULT_EXPORT_MODEL = "claude-opus-4-7";
+
 type RequestBody = {
   html?: unknown;
   clientName?: unknown;
@@ -322,11 +324,10 @@ export async function POST(req: Request) {
   });
 
   try {
-    console.log(
-      "[export] streaming Claude (model=claude-sonnet-4-5, max_tokens=16000)…",
-    );
+    const model = process.env.ANTHROPIC_EXPORT_MODEL || DEFAULT_EXPORT_MODEL;
+    console.log(`[export] streaming Claude (model=${model}, max_tokens=16000)…`);
     const stream = client.messages.stream({
-      model: "claude-sonnet-4-5",
+      model,
       max_tokens: 16000,
       messages: [{ role: "user", content: prompt }],
     });
