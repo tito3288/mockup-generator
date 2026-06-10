@@ -7,7 +7,7 @@ type Mockup = { name: string; html: string };
 type Screenshot = { name: string; dataUrl: string };
 type LogoBackground = "light" | "dark" | "either";
 type GenerationProvider = "anthropic" | "openai";
-type ShareLink = { url: string; expiresAt: number };
+type ShareLink = { id?: string; url: string; expiresAt: number };
 type ClientImageRole = "hero" | "services" | "team" | "gallery" | "general";
 type ClientImageAsset = {
   id: string;
@@ -263,7 +263,10 @@ export default function Home() {
             typeof v.expiresAt === "number" &&
             v.expiresAt > now
           ) {
-            cleaned[Number(k)] = v;
+            cleaned[Number(k)] =
+              typeof v.id === "string"
+                ? { id: v.id, url: v.url, expiresAt: v.expiresAt }
+                : { url: v.url, expiresAt: v.expiresAt };
           }
         }
         setShareLinks(cleaned);
@@ -706,7 +709,11 @@ export default function Home() {
       }
       const next: Record<number, ShareLink> = {
         ...shareLinks,
-        [index]: { url: data.url as string, expiresAt: data.expiresAt as number },
+        [index]: {
+          id: data.id as string,
+          url: data.url as string,
+          expiresAt: data.expiresAt as number,
+        },
       };
       setShareLinks(next);
       setShareModalIndex(index);
@@ -740,6 +747,7 @@ export default function Home() {
     }
 
     setRefiningIndex(index);
+    setShareError(null);
     setRefineErrors((prev) => {
       const next = { ...prev };
       delete next[index];
@@ -768,6 +776,55 @@ export default function Home() {
       const refined = data.mockup as Mockup;
       const qaReport = data.qaReport as RefineQAReport | undefined;
       const nextMockups = mockups.map((m, i) => (i === index ? refined : m));
+      let nextShareLinks = shareLinks;
+      const activeShareLink = shareLinks[index];
+
+      if (activeShareLink?.id) {
+        try {
+          const shareRes = await fetch("/api/share", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              id: activeShareLink.id,
+              html: refined.html,
+            }),
+          });
+          const shareData = await shareRes.json();
+          if (!shareRes.ok) {
+            throw new Error(shareData?.error ?? "Could not refresh share link");
+          }
+
+          nextShareLinks = {
+            ...shareLinks,
+            [index]: {
+              id: shareData.id as string,
+              url: shareData.url as string,
+              expiresAt: shareData.expiresAt as number,
+            },
+          };
+          setShareLinks(nextShareLinks);
+        } catch (shareErr) {
+          nextShareLinks = { ...shareLinks };
+          delete nextShareLinks[index];
+          setShareLinks(nextShareLinks);
+          if (shareModalIndex === index) {
+            setShareModalIndex(null);
+          }
+          setShareError(
+            shareErr instanceof Error
+              ? `${shareErr.message}. Create a new share link before sending it.`
+              : "Could not refresh share link. Create a new share link before sending it.",
+          );
+        }
+      } else if (activeShareLink) {
+        nextShareLinks = { ...shareLinks };
+        delete nextShareLinks[index];
+        setShareLinks(nextShareLinks);
+        if (shareModalIndex === index) {
+          setShareModalIndex(null);
+        }
+      }
+
       setMockups(nextMockups);
       setRefineInstructions((prev) => ({ ...prev, [index]: "" }));
       if (qaReport) {
@@ -778,7 +835,11 @@ export default function Home() {
         const existing = raw ? JSON.parse(raw) : {};
         sessionStorage.setItem(
           STORAGE_KEY,
-          JSON.stringify({ ...existing, mockups: nextMockups }),
+          JSON.stringify({
+            ...existing,
+            mockups: nextMockups,
+            shareLinks: nextShareLinks,
+          }),
         );
       } catch {
         // best effort

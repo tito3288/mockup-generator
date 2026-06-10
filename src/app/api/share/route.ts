@@ -19,7 +19,18 @@ export async function POST(request: Request) {
     );
   }
 
-  const id = newPreviewId();
+  const providedId = (body as { id?: unknown })?.id;
+  if (
+    providedId !== undefined &&
+    (typeof providedId !== "string" || !/^[a-f0-9-]{36}$/i.test(providedId))
+  ) {
+    return NextResponse.json(
+      { error: "Missing or invalid preview id" },
+      { status: 400 },
+    );
+  }
+
+  const id = providedId ?? newPreviewId();
   await saveHtml(id, html);
 
   const proto =
