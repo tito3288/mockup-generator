@@ -120,6 +120,8 @@ function buildKickoffMd(clientName: string, clientSlug: string): string {
 
 You are Claude Code running in a terminal. **This prompt only handles the project scaffold.** The homepage build happens later in a separate prompt (\`BUILD_PROMPT.md\`) once the design files are in the workspace.
 
+This is a static Astro marketing site intended for Cloudflare Pages. Do not install \`@astrojs/cloudflare\`, \`wrangler\`, or any Cloudflare adapter unless the project explicitly needs SSR, API routes, Cloudflare bindings, KV, D1, or Workers runtime features.
+
 ## What to do
 
 Scaffold a fresh Astro project in a new subfolder named \`${clientSlug}\` (relative to the current working directory). Use the Astro CLI **non-interactively** so the install does not stall on prompts:
@@ -135,14 +137,22 @@ cd ${clientSlug}
 git init -b main
 npx astro add tailwind --yes
 npx astro add mdx --yes
-npx astro add cloudflare --yes
+\`\`\`
+
+Before committing, make sure \`.gitignore\` contains these generated/local-only paths:
+
+\`\`\`gitignore
+.wrangler/
+dist/
+.astro/
+node_modules/
 \`\`\`
 
 Stage everything and create a baseline commit so the user has a clean rollback point:
 
 \`\`\`bash
 git add .
-git commit -m "Initial Astro scaffold: TypeScript + Tailwind + MDX + Cloudflare"
+git commit -m "Initial Astro scaffold: TypeScript + Tailwind + MDX"
 \`\`\`
 
 Verify the dev server boots cleanly:
@@ -158,6 +168,14 @@ Stop the server after ~5 seconds. If anything errored, fix it and try again. The
 - Do **NOT** build the homepage yet.
 - Do **NOT** modify \`tailwind.config.ts\` beyond what \`astro add tailwind\` produces.
 - Do **NOT** add additional dependencies.
+- Do **NOT** install \`@astrojs/cloudflare\`, \`wrangler\`, or add \`wrangler.jsonc\` for this static Cloudflare Pages scaffold.
+
+## Cloudflare Pages deploy settings
+
+When this site is pushed to GitHub and connected to Cloudflare Pages, use:
+
+- Build command: \`npm run build\`
+- Build output directory: \`dist\`
 
 ## Hand-off back to the user
 
