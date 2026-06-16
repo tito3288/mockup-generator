@@ -230,7 +230,36 @@ Read all three before writing any code.
 
 8. **SEO-ready** — \`<title>\`, meta description, Open Graph tags, canonical URL.
 
-9. **Verify** — run \`npx astro check\` and \`npx astro build\`. Fix any errors before reporting done.
+9. **Contact/lead forms — conditional Resend + Cloudflare Pages Functions.** If \`design/index.html\` includes a contact form, lead form, booking request form, quote request form, newsletter signup, or any other form that should send an email, implement it with Cloudflare Pages Functions and Resend:
+   - Keep the Astro site static. Do **NOT** add \`@astrojs/cloudflare\`, \`wrangler.jsonc\`, SSR mode, or Astro API routes under \`src/pages/api\`.
+   - Create the server endpoint at \`functions/api/contact.ts\` so it deploys as \`/api/contact\` on Cloudflare Pages.
+   - Wire the browser form to submit to \`/api/contact\` using \`fetch\` or a normal form post. Never expose secrets in client-side code.
+   - Read these values from the Pages Function \`env\` object: \`RESEND_API_KEY\`, \`RESEND_FROM_EMAIL\`, and \`CONTACT_TO_EMAIL\`.
+   - Use direct \`fetch("https://api.resend.com/emails")\` inside the Pages Function rather than a separate backend. Include \`Authorization\` with the Resend API key, \`Content-Type: application/json\`, and a \`User-Agent\` header such as \`client-site-contact-form/1.0\`.
+   - Send both \`text\` and \`html\` email bodies, set \`reply_to\` to the submitter's email, and include a clear subject with the site/client name.
+   - Validate required fields server-side, trim submitted strings, cap message lengths, and return JSON responses like \`{ "ok": true }\` or \`{ "ok": false, "message": "..." }\`.
+   - Add a hidden honeypot input named \`website\`; if it is filled, return \`{ "ok": true }\` without sending email.
+   - Create \`.dev.vars.example\` with placeholders only:
+
+     \`\`\`dotenv
+     RESEND_API_KEY="re_xxxxxxxxxxxxxxxxxxxxxxxxx"
+     RESEND_FROM_EMAIL="Business Name <leads@example.com>"
+     CONTACT_TO_EMAIL="owner@example.com"
+     \`\`\`
+
+   - Ensure \`.gitignore\` ignores real local secrets while allowing examples:
+
+     \`\`\`gitignore
+     .dev.vars*
+     .env*
+     !.dev.vars.example
+     !.env.example
+     \`\`\`
+
+   - Do not commit real API keys. In Cloudflare Pages, add \`RESEND_API_KEY\` as an encrypted secret and add \`RESEND_FROM_EMAIL\` / \`CONTACT_TO_EMAIL\` as project variables or secrets.
+   - If there is no form that needs to send email, do not create \`functions/\`, \`.dev.vars.example\`, or any Resend-related files.
+
+10. **Verify** — run \`npx astro check\` and \`npx astro build\`. Fix any errors before reporting done. If a Pages Function was added, also verify the form handler locally after building with \`npx wrangler pages dev dist\` when Wrangler is available; Wrangler is only for local Pages Function testing and should not be committed as project config.
 
 ## Hand-off back to the user
 

@@ -33,10 +33,10 @@ Fill in the form, choose a generation engine, and click **Generate Mockups**. Pr
 
 ## How it works
 
-- `src/app/page.tsx` — client component with the form and results grid. Client photos and screenshots are compressed in-browser to about 1800px max dimension and a 1.5MB cap before being sent as data URLs. Each client image can be tagged as hero, services, team, gallery, or general.
+- `src/app/page.tsx` — client component with the form and results grid. Client photos and screenshots are compressed in-browser to about 1800px max dimension and a 1.5MB cap before being sent as data URLs. Each client image can be tagged as hero, services, team, gallery, or general. The direction step includes a form-needed selector so generated mockups can intentionally include or avoid contact, quote, booking, newsletter, or custom lead forms.
 - `src/app/api/generate/route.ts` — premium server route that validates inputs, uses Firecrawl for shared research when configured, asks the selected provider for brand/inspiration analysis and creative directions, generates mockups, renders them with Playwright at mobile/tablet/desktop sizes, runs model QA, and repairs failing concepts once. Anthropic defaults to Claude Opus 4.7. OpenAI defaults to GPT-5.5.
 - `src/app/api/refine/route.ts` — targeted per-mockup refinement route. It protects embedded image data, asks the selected provider to revise one HTML mockup from the user's edit notes, restores the images, and runs a quick responsive overflow QA check.
-- `src/app/api/export/route.ts` — server route behind **Use This Design**. It creates the AI handoff bundle: `CLAUDE_KICKOFF.md`, `BUILD_PROMPT.md`, `BLUEPRINT.md`, `theme.config.ts`, and `design/index.html`. The kickoff scaffold defaults to static Astro for Cloudflare Pages (`npm run build`, output `dist`) and avoids the Cloudflare adapter/Wrangler path unless server runtime features are explicitly needed.
+- `src/app/api/export/route.ts` — server route behind **Use This Design**. It creates the AI handoff bundle: `CLAUDE_KICKOFF.md`, `BUILD_PROMPT.md`, `BLUEPRINT.md`, `theme.config.ts`, and `design/index.html`. The kickoff scaffold defaults to static Astro for Cloudflare Pages (`npm run build`, output `dist`) and avoids the Cloudflare adapter/Wrangler path unless server runtime features are explicitly needed. If a generated design includes a contact or lead form, the build prompt instructs the agent to use a Cloudflare Pages Function at `functions/api/contact.ts` with Resend secrets read from the function environment.
 
 ## Notes
 

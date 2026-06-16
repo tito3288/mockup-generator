@@ -7,6 +7,13 @@ type Mockup = { name: string; html: string };
 type Screenshot = { name: string; dataUrl: string };
 type LogoBackground = "light" | "dark" | "either";
 type GenerationProvider = "anthropic" | "openai";
+type FormRequirement =
+  | "none"
+  | "contact"
+  | "quote"
+  | "booking"
+  | "newsletter"
+  | "custom";
 type ShareLink = { id?: string; url: string; expiresAt: number };
 type ClientImageRole = "hero" | "services" | "team" | "gallery" | "general";
 type ClientImageAsset = {
@@ -60,7 +67,7 @@ const INTAKE_STEPS = [
   {
     id: "direction",
     title: "Project Direction",
-    description: "Brief, goals, audience, must-haves, and style notes.",
+    description: "Brief, goals, form needs, audience, and style notes.",
   },
   {
     id: "inspiration",
@@ -80,6 +87,29 @@ const INTAKE_STEPS = [
 ] as const;
 type IntakeStepId = (typeof INTAKE_STEPS)[number]["id"];
 
+const FORM_REQUIREMENT_OPTIONS: Array<{
+  id: FormRequirement;
+  label: string;
+}> = [
+  { id: "none", label: "No custom form" },
+  { id: "contact", label: "Contact form" },
+  { id: "quote", label: "Quote request form" },
+  { id: "booking", label: "Booking inquiry form" },
+  { id: "newsletter", label: "Newsletter signup" },
+  { id: "custom", label: "Custom" },
+];
+
+function isFormRequirement(value: unknown): value is FormRequirement {
+  return (
+    value === "none" ||
+    value === "contact" ||
+    value === "quote" ||
+    value === "booking" ||
+    value === "newsletter" ||
+    value === "custom"
+  );
+}
+
 type PersistedState = {
   urls: [string, string, string];
   currentSite: string;
@@ -97,6 +127,8 @@ type PersistedState = {
   audience: string;
   goals: string;
   mustHaves: string;
+  formRequirement: FormRequirement;
+  formDetails: string;
   avoidList: string;
   compNotes: string;
   styleNotes: string;
@@ -135,6 +167,9 @@ export default function Home() {
   const [audience, setAudience] = useState("");
   const [goals, setGoals] = useState("");
   const [mustHaves, setMustHaves] = useState("");
+  const [formRequirement, setFormRequirement] =
+    useState<FormRequirement>("none");
+  const [formDetails, setFormDetails] = useState("");
   const [avoidList, setAvoidList] = useState("");
   const [compNotes, setCompNotes] = useState("");
   const [styleNotes, setStyleNotes] = useState("");
@@ -228,6 +263,10 @@ export default function Home() {
       if (typeof data.audience === "string") setAudience(data.audience);
       if (typeof data.goals === "string") setGoals(data.goals);
       if (typeof data.mustHaves === "string") setMustHaves(data.mustHaves);
+      if (isFormRequirement(data.formRequirement))
+        setFormRequirement(data.formRequirement);
+      if (typeof data.formDetails === "string")
+        setFormDetails(data.formDetails);
       if (typeof data.avoidList === "string") setAvoidList(data.avoidList);
       if (typeof data.compNotes === "string") setCompNotes(data.compNotes);
       if (typeof data.styleNotes === "string") setStyleNotes(data.styleNotes);
@@ -571,6 +610,8 @@ export default function Home() {
           audience,
           goals,
           mustHaves,
+          formRequirement,
+          formDetails,
           avoidList,
           compNotes,
           styleNotes,
@@ -612,6 +653,8 @@ export default function Home() {
           audience,
           goals,
           mustHaves,
+          formRequirement,
+          formDetails,
           avoidList,
           compNotes,
           styleNotes,
@@ -882,6 +925,9 @@ export default function Home() {
   const activeStep = INTAKE_STEPS[currentStep];
   const activeStepId: IntakeStepId = activeStep.id;
   const isLastStep = currentStep === INTAKE_STEPS.length - 1;
+  const selectedFormOption =
+    FORM_REQUIREMENT_OPTIONS.find((opt) => opt.id === formRequirement) ??
+    FORM_REQUIREMENT_OPTIONS[0];
   const firstInspirationUrl = urls[0].trim();
   const canLeaveBasics = Boolean(clientName.trim() && logoDataUrl);
   const canLeaveInspiration = Boolean(firstInspirationUrl);
@@ -1100,6 +1146,55 @@ export default function Home() {
                 etc. Applies to all three concepts and works the same for both
                 engines.
               </p>
+            </div>
+
+            <div
+              className={`grid grid-cols-1 gap-4 md:grid-cols-2 ${
+                activeStepId === "direction" ? "" : "hidden"
+              }`}
+            >
+              <div>
+                <label className="mb-2 block text-sm font-semibold text-slate-800">
+                  Form needed
+                </label>
+                <select
+                  value={formRequirement}
+                  onChange={(e) =>
+                    setFormRequirement(e.target.value as FormRequirement)
+                  }
+                  className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-slate-400 focus:ring-4 focus:ring-slate-900/10"
+                >
+                  {FORM_REQUIREMENT_OPTIONS.map((opt) => (
+                    <option key={opt.id} value={opt.id}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+                <p className="mt-1 text-xs text-slate-500">
+                  Choose a form only when the final site should collect or send
+                  submissions.
+                </p>
+              </div>
+
+              {formRequirement !== "none" && (
+                <div>
+                  <label className="mb-2 block text-sm font-semibold text-slate-800">
+                    Form details
+                  </label>
+                  <textarea
+                    rows={3}
+                    placeholder="Name, email, phone, service interested in, preferred date, message..."
+                    value={formDetails}
+                    onChange={(e) => setFormDetails(e.target.value)}
+                    className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-slate-400 focus:ring-4 focus:ring-slate-900/10"
+                  />
+                  <p className="mt-1 text-xs text-slate-500">
+                    Used to make the mockup include the right fields. Resend
+                    setup is added later only if the design includes a real
+                    form.
+                  </p>
+                </div>
+              )}
             </div>
 
             <div
@@ -1547,6 +1642,19 @@ export default function Home() {
                     </p>
                     <p className="mt-1 text-xs text-slate-500">
                       {styleNotes.trim() || goals.trim() || "No extra style notes"}
+                    </p>
+                  </div>
+                  <div className="rounded-2xl border border-slate-200 bg-white p-3">
+                    <p className="text-xs font-medium uppercase tracking-[0.16em] text-slate-400">
+                      Form
+                    </p>
+                    <p className="mt-1 font-semibold text-slate-900">
+                      {selectedFormOption.label}
+                    </p>
+                    <p className="mt-1 text-xs text-slate-500">
+                      {formRequirement === "none"
+                        ? "No Resend form needed"
+                        : formDetails.trim() || "Default fields"}
                     </p>
                   </div>
                   <div className="rounded-2xl border border-slate-200 bg-white p-3">

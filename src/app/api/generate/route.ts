@@ -8,6 +8,13 @@ type Mockup = { name: string; html: string };
 type LogoBackground = "light" | "dark" | "either";
 type GenerationProvider = "anthropic" | "openai";
 type QualityMode = "premium";
+type FormRequirement =
+  | "none"
+  | "contact"
+  | "quote"
+  | "booking"
+  | "newsletter"
+  | "custom";
 type ClientImageRole = "hero" | "services" | "team" | "gallery" | "general";
 type AllowedImageMediaType = "image/png" | "image/jpeg" | "image/gif" | "image/webp";
 type ParsedImage = { mediaType: AllowedImageMediaType; base64: string; label?: string };
@@ -70,6 +77,8 @@ type RequestBody = {
   audience?: unknown;
   goals?: unknown;
   mustHaves?: unknown;
+  formRequirement?: unknown;
+  formDetails?: unknown;
   avoidList?: unknown;
   compNotes?: unknown;
   styleNotes?: unknown;
@@ -129,6 +138,34 @@ function clientImagePlaceholder(id: string) {
 
 function cleanString(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function cleanFormRequirement(value: unknown): FormRequirement {
+  return value === "contact" ||
+    value === "quote" ||
+    value === "booking" ||
+    value === "newsletter" ||
+    value === "custom"
+    ? value
+    : "none";
+}
+
+function formRequirementLabel(value: FormRequirement) {
+  switch (value) {
+    case "contact":
+      return "Contact form";
+    case "quote":
+      return "Quote request form";
+    case "booking":
+      return "Booking inquiry form";
+    case "newsletter":
+      return "Newsletter signup";
+    case "custom":
+      return "Custom form";
+    case "none":
+    default:
+      return "No custom form";
+  }
 }
 
 function extractJson(text: string): unknown {
@@ -509,6 +546,8 @@ function buildAnalysisPrompt(args: {
   audience: string;
   goals: string;
   mustHaves: string;
+  formRequirement: FormRequirement;
+  formDetails: string;
   avoidList: string;
   compNotes: string;
   styleNotes: string;
@@ -535,6 +574,8 @@ Project brief: ${args.projectBrief || "(none)"}
 Audience: ${args.audience || "(infer from client site and brief)"}
 Goals: ${args.goals || "(infer)"}
 Must-haves: ${args.mustHaves || "(none)"}
+Form requirement: ${formRequirementLabel(args.formRequirement)}
+Form details: ${args.formRequirement === "none" ? "(none)" : args.formDetails || "(use sensible default fields for this form type)"}
 Avoid: ${args.avoidList || "(none)"}
 Comp usage notes: ${args.compNotes || "(none)"}
 Style notes: ${args.styleNotes || "(none)"}
@@ -546,6 +587,7 @@ ${JSON.stringify(researchForPrompt, null, 2)}
 Rules:
 - Treat the current site as brand truth when present.
 - Inspiration sites are visual direction only unless the user explicitly says otherwise.
+- If the form requirement is not "No custom form", make the form a deliberate conversion element in the strategy. If it is "No custom form", do not create form-based concepts just because a site has contact CTAs.
 - Do not invent facts that conflict with research.
 - The 3 directions must be visibly different, premium, and practical to render as standalone Tailwind HTML.`;
 }
@@ -610,6 +652,8 @@ function buildHtmlPrompt(args: {
   brandColor: string;
   logoBackground: LogoBackground;
   projectBrief: string;
+  formRequirement: FormRequirement;
+  formDetails: string;
   heroDirection: string;
   analysis: DesignAnalysis;
   imageAssets: ClientImageAsset[];
@@ -624,6 +668,10 @@ function buildHtmlPrompt(args: {
   const providerToolInstruction = args.usedProviderTools
     ? "Use your web tool on the current site and inspiration URLs before writing if Firecrawl research is empty or failed."
     : "Do not browse unless needed; the research packet below is the shared source of truth.";
+  const formInstruction =
+    args.formRequirement === "none"
+      ? "Do not include a custom form in the mockups. Use CTA buttons or contact links instead."
+      : `Each mockup must include a polished ${formRequirementLabel(args.formRequirement).toLowerCase()} section with real form controls. Use these requested fields/details: ${args.formDetails || "use sensible default fields for this form type"}. Give fields practical name attributes, include a hidden honeypot input named website, and make the form visually integrated with the design.`;
 
   return `You are a senior web designer creating 3 state-of-the-art homepage mockups for ${args.clientName}.
 
@@ -642,6 +690,8 @@ CLIENT CURRENT SITE: ${currentSite || "(none)"}
 INSPIRATION URLS: ${inspirationUrls || "(none)"}
 BRAND COLOR HINTS: ${args.brandColor || "designer's choice"}
 PROJECT BRIEF: ${args.projectBrief || "(none)"}
+FORM REQUIREMENT: ${formRequirementLabel(args.formRequirement)}
+FORM DETAILS: ${args.formRequirement === "none" ? "(none)" : args.formDetails || "(use sensible default fields for this form type)"}
 HERO DIRECTION: ${args.heroDirection || "(none)"}
 
 LOGO PLACEHOLDER:
@@ -661,6 +711,9 @@ Client image rules:
 
 Logo background constraint:
 ${args.logoBackground === "either" ? "Choose whatever header background best fits each design." : `The logo works best on ${args.logoBackground} backgrounds. Ensure it stays visible in every design.`}
+
+Form constraint:
+${formInstruction}
 
 For each of the 3 mockups:
 - Make a complete standalone HTML file with <!DOCTYPE html>, <html>, <head>, and <body>.
@@ -955,6 +1008,8 @@ export async function POST(req: Request) {
   const currentSite = cleanString(body.currentSite);
   const brandColor = cleanString(body.brandColor);
   const projectBrief = cleanString(body.projectBrief);
+  const formRequirement = cleanFormRequirement(body.formRequirement);
+  const formDetails = cleanString(body.formDetails);
   const heroDirection = cleanString(body.heroDirection);
   const logoBackground: LogoBackground =
     body.logoBackground === "light" || body.logoBackground === "dark" ? body.logoBackground : "either";
@@ -967,6 +1022,7 @@ export async function POST(req: Request) {
     inspirationUrls: cleanedUrls.length,
     screenshots: parsedScreenshots.length,
     clientImages: clientImages.length,
+    formRequirement,
     qualityMode,
   });
 
@@ -990,6 +1046,8 @@ export async function POST(req: Request) {
       audience: cleanString(body.audience),
       goals: cleanString(body.goals),
       mustHaves: cleanString(body.mustHaves),
+      formRequirement,
+      formDetails,
       avoidList: cleanString(body.avoidList),
       compNotes: cleanString(body.compNotes),
       styleNotes: cleanString(body.styleNotes),
@@ -1013,6 +1071,8 @@ export async function POST(req: Request) {
       brandColor,
       logoBackground,
       projectBrief,
+      formRequirement,
+      formDetails,
       heroDirection,
       analysis,
       imageAssets: clientImages,
