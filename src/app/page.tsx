@@ -56,6 +56,8 @@ const STORAGE_KEY = "mockup-generator:state";
 const MAX_SCREENSHOTS = 3;
 const MAX_CLIENT_IMAGES = 12;
 const MAX_COMPRESSED_IMAGE_BYTES = 1.5 * 1024 * 1024;
+const MAX_GENERATE_REQUEST_BYTES = 24 * 1024 * 1024;
+const HOSTED_BODY_LIMIT_HINT_BYTES = 4 * 1024 * 1024;
 const IMAGE_QUALITY = 0.82;
 const IMAGE_MAX_DIMENSION = 1800;
 const INTAKE_STEPS = [
@@ -408,26 +410,118 @@ export default function Home() {
     return { dataUrl, bytes };
   }
 
+  async function compressLogoFile(file: File) {
+    if (!file.type.startsWith("image/")) {
+      throw new Error(`${file.name} is not an image`);
+    }
+    const originalDataUrl = await readFileAsDataUrl(file);
+    if (file.size <= MAX_COMPRESSED_IMAGE_BYTES) {
+      return { dataUrl: originalDataUrl, bytes: file.size };
+    }
+    if (file.type === "image/gif") {
+      throw new Error(`${file.name} is an animated/large GIF. Use PNG or WEBP for the logo.`);
+    }
+
+    const img = await loadImage(originalDataUrl);
+    const scale = Math.min(
+      1,
+      IMAGE_MAX_DIMENSION / Math.max(img.naturalWidth, img.naturalHeight),
+    );
+    const width = Math.max(1, Math.round(img.naturalWidth * scale));
+    const height = Math.max(1, Math.round(img.naturalHeight * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("Could not prepare logo compressor");
+    ctx.drawImage(img, 0, 0, width, height);
+
+    let quality = IMAGE_QUALITY;
+    let dataUrl = canvas.toDataURL("image/webp", quality);
+    while (dataUrlByteLength(dataUrl) > MAX_COMPRESSED_IMAGE_BYTES && quality > 0.55) {
+      quality -= 0.08;
+      dataUrl = canvas.toDataURL("image/webp", quality);
+    }
+    const bytes = dataUrlByteLength(dataUrl);
+    if (bytes > MAX_COMPRESSED_IMAGE_BYTES) {
+      throw new Error(`${file.name} is still over 1.5MB after compression`);
+    }
+    return { dataUrl, bytes };
+  }
+
   function formatBytes(bytes: number) {
     if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)}KB`;
     return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
   }
 
-  function handleLogoChange(e: ChangeEvent<HTMLInputElement>) {
+  function getPayloadErrorHint(requestBytes?: number) {
+    if (requestBytes && requestBytes > HOSTED_BODY_LIMIT_HINT_BYTES) {
+      return ` The request was ${formatBytes(requestBytes)}, so this may be a hosting request-size limit. Try fewer client images/screenshots or smaller uploads.`;
+    }
+    return " Check the server logs for the API route failure.";
+  }
+
+  function errorFromPayload(data: unknown, fallback: string) {
+    if (data && typeof data === "object" && "error" in data) {
+      const error = (data as { error?: unknown }).error;
+      if (typeof error === "string" && error.trim()) return error;
+    }
+    return fallback;
+  }
+
+  async function readJsonResponse<T>(
+    res: Response,
+    fallback: string,
+    requestBytes?: number,
+  ): Promise<T> {
+    const contentType = res.headers.get("content-type") ?? "";
+    const text = await res.text();
+    const trimmed = text.trim();
+
+    if (contentType.includes("application/json") || trimmed.startsWith("{")) {
+      try {
+        return JSON.parse(trimmed) as T;
+      } catch {
+        throw new Error(`${fallback}: server returned malformed JSON.`);
+      }
+    }
+
+    const status = res.status ? `HTTP ${res.status}` : "a non-JSON response";
+    const kind = contentType ? `${contentType} response` : "non-JSON response";
+    if (!res.ok) {
+      throw new Error(
+        `${fallback}: server returned ${status} (${kind}) instead of JSON.${getPayloadErrorHint(
+          requestBytes,
+        )}`,
+      );
+    }
+    throw new Error(
+      `${fallback}: server returned ${kind} instead of JSON.${getPayloadErrorHint(
+        requestBytes,
+      )}`,
+    );
+  }
+
+  async function handleLogoChange(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) {
       setLogoDataUrl(null);
       setLogoFileName("");
       return;
     }
-    setLogoFileName(file.name);
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = reader.result;
-      if (typeof result === "string") setLogoDataUrl(result);
-    };
-    reader.onerror = () => setError("Could not read the selected logo file");
-    reader.readAsDataURL(file);
+    setError(null);
+    try {
+      const compressed = await compressLogoFile(file);
+      setLogoFileName(
+        `${file.name} (${formatBytes(file.size)} → ${formatBytes(compressed.bytes)})`,
+      );
+      setLogoDataUrl(compressed.dataUrl);
+    } catch (err) {
+      setLogoDataUrl(null);
+      setLogoFileName("");
+      setError(err instanceof Error ? err.message : "Could not prepare logo image");
+      e.target.value = "";
+    }
   }
 
   async function handleHeroPhotoChange(e: ChangeEvent<HTMLInputElement>) {
@@ -591,37 +685,52 @@ export default function Home() {
     setShareError(null);
 
     try {
+      const payload = {
+        urls,
+        currentSite,
+        logoDataUrl,
+        brandColor,
+        clientName,
+        screenshots: screenshots.map((s) => s.dataUrl),
+        heroPhotoDataUrl,
+        heroDirection,
+        logoBackground,
+        generationProvider,
+        projectBrief,
+        clientImages,
+        audience,
+        goals,
+        mustHaves,
+        formRequirement,
+        formDetails,
+        avoidList,
+        compNotes,
+        styleNotes,
+        qualityMode: "premium",
+      };
+      const requestJson = JSON.stringify(payload);
+      const requestBytes = new Blob([requestJson]).size;
+      if (requestBytes > MAX_GENERATE_REQUEST_BYTES) {
+        throw new Error(
+          `Uploads are too large for one generation request (${formatBytes(
+            requestBytes,
+          )}). Remove a few client images/screenshots or upload smaller files.`,
+        );
+      }
+
       const res = await fetch("/api/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          urls,
-          currentSite,
-          logoDataUrl,
-          brandColor,
-          clientName,
-          screenshots: screenshots.map((s) => s.dataUrl),
-          heroPhotoDataUrl,
-          heroDirection,
-          logoBackground,
-          generationProvider,
-          projectBrief,
-          clientImages,
-          audience,
-          goals,
-          mustHaves,
-          formRequirement,
-          formDetails,
-          avoidList,
-          compNotes,
-          styleNotes,
-          qualityMode: "premium",
-        }),
+        body: requestJson,
       });
 
-      const data = await res.json();
+      const data = await readJsonResponse<Record<string, unknown>>(
+        res,
+        "Generation failed",
+        requestBytes,
+      );
       if (!res.ok) {
-        throw new Error(data?.error ?? "Generation failed");
+        throw new Error(errorFromPayload(data, "Generation failed"));
       }
       const fresh = data.mockups as Mockup[];
       setMockups(fresh);
@@ -685,9 +794,12 @@ export default function Home() {
         body: JSON.stringify({ html: mockup.html, clientName }),
       });
 
-      const data = await res.json();
+      const data = await readJsonResponse<Record<string, unknown>>(
+        res,
+        "Export failed",
+      );
       if (!res.ok) {
-        throw new Error(data?.error ?? "Export failed");
+        throw new Error(errorFromPayload(data, "Export failed"));
       }
 
       const { default: JSZip } = await import("jszip");
@@ -746,9 +858,12 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ html: mockup.html }),
       });
-      const data = await res.json();
+      const data = await readJsonResponse<Record<string, unknown>>(
+        res,
+        "Could not create share link",
+      );
       if (!res.ok) {
-        throw new Error(data?.error ?? "Could not create share link");
+        throw new Error(errorFromPayload(data, "Could not create share link"));
       }
       const next: Record<number, ShareLink> = {
         ...shareLinks,
@@ -811,9 +926,12 @@ export default function Home() {
           styleNotes,
         }),
       });
-      const data = await res.json();
+      const data = await readJsonResponse<Record<string, unknown>>(
+        res,
+        "Refinement failed",
+      );
       if (!res.ok) {
-        throw new Error(data?.error ?? "Refinement failed");
+        throw new Error(errorFromPayload(data, "Refinement failed"));
       }
 
       const refined = data.mockup as Mockup;
@@ -832,9 +950,12 @@ export default function Home() {
               html: refined.html,
             }),
           });
-          const shareData = await shareRes.json();
+          const shareData = await readJsonResponse<Record<string, unknown>>(
+            shareRes,
+            "Could not refresh share link",
+          );
           if (!shareRes.ok) {
-            throw new Error(shareData?.error ?? "Could not refresh share link");
+            throw new Error(errorFromPayload(shareData, "Could not refresh share link"));
           }
 
           nextShareLinks = {

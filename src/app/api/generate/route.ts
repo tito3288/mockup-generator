@@ -92,6 +92,7 @@ const DEFAULT_ANTHROPIC_MODEL = "claude-opus-4-7";
 const DEFAULT_OPENAI_REASONING = "medium";
 const MAX_SCREENSHOTS = 3;
 const MAX_CLIENT_IMAGES = 12;
+const MAX_LOGO_DATA_URL_BYTES = 2.2 * 1024 * 1024;
 const MAX_SCREENSHOT_DATA_URL_BYTES = 7 * 1024 * 1024;
 const MAX_CLIENT_IMAGE_DATA_URL_BYTES = 2.2 * 1024 * 1024;
 const MAX_TOTAL_CLIENT_IMAGE_BYTES = 18 * 1024 * 1024;
@@ -948,6 +949,9 @@ export async function POST(req: Request) {
   const logoDataUrl = body.logoDataUrl;
   if (typeof logoDataUrl !== "string" || !parseImageDataUrl(logoDataUrl)) {
     return badRequest("Logo must be uploaded as an image data URL");
+  }
+  if (logoDataUrl.length > MAX_LOGO_DATA_URL_BYTES) {
+    return badRequest("Logo is too large; upload a smaller image");
   }
 
   const clientName = cleanString(body.clientName);
