@@ -808,6 +808,8 @@ export default function Home() {
       zip.file("BUILD_PROMPT.md", data.buildPrompt as string);
       zip.file("BLUEPRINT.md", data.blueprint as string);
       zip.file("theme.config.ts", data.themeConfig as string);
+      zip.file("RUN_LOOP.md", data.runLoop as string);
+      zip.file("visual-diff.mjs", data.visualDiff as string);
       zip.folder("design")?.file("index.html", mockup.html);
 
       const blob = await zip.generateAsync({ type: "blob" });

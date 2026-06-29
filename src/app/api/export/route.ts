@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
+import { buildRunLoopMd, getVisualDiffMjs } from "./handoff-assets";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -419,6 +420,8 @@ export async function POST(req: Request) {
 
     const kickoff = buildKickoffMd(trimmedClient, clientSlug);
     const buildPromptMd = buildBuildPromptMd(trimmedClient, clientSlug);
+    const runLoop = buildRunLoopMd(clientSlug);
+    const visualDiff = getVisualDiffMjs();
 
     console.log("[export] success", {
       slug: clientSlug,
@@ -426,6 +429,8 @@ export async function POST(req: Request) {
       themeConfigChars: payload.themeConfig.length,
       kickoffChars: kickoff.length,
       buildPromptChars: buildPromptMd.length,
+      runLoopChars: runLoop.length,
+      visualDiffChars: visualDiff.length,
       elapsedSec: ((Date.now() - startedAt) / 1000).toFixed(1),
     });
 
@@ -435,6 +440,8 @@ export async function POST(req: Request) {
       themeConfig: payload.themeConfig,
       kickoff,
       buildPrompt: buildPromptMd,
+      runLoop,
+      visualDiff,
     });
   } catch (err) {
     console.error(
